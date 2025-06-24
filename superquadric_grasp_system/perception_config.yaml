@@ -1,0 +1,94 @@
+perception:
+  # Basic system parameters
+  processing_rate: 10.0
+  visualization_rate: 15.0
+  device: "auto"  # auto, cuda, cpu
+  
+  # Web visualization parameters
+  web_interface:
+    enabled: true
+    port: 8080
+    web_dir: "/tmp/grasp_system_live"
+    update_rate: 15.0  # FPS for web updates
+    image_quality: 85  # JPEG quality (1-100)
+  
+  # Camera parameters
+  camera:
+    camera1_sn: 33137761
+    camera2_sn: 32689769
+    transform_file_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/config/transform.yaml"
+    resolution: HD1080  # HD720 , HD1080, HD2K
+  
+  # Detection parameters
+  detection:
+    method: "yolo"  # yolo
+    yolo_model_path: "superquadric_grasp_system/models/yolo_seg_finetuned.pt"
+    confidence_threshold: 0.1
+    classes: [0, 1, 2, 3, 4]
+    class_names:
+      0: "Cone"
+      1: "Cup" 
+      2: "Mallet"
+      3: "Screw Driver"
+      4: "Sunscreen"
+  
+  # Point cloud parameters
+  point_cloud:
+    voxel_size: 0.002
+    workspace_bounds: [-0.25, 0.75, -0.5, 0.5, -0.05, 2.0]
+    distance_threshold: 0.4
+    require_both_cameras: true
+    publish_point_clouds: true
+    target_frame: "panda_link0"
+
+  # Pose estimation configuration
+  pose_estimation:
+    method: "superquadric"  # "icp" or "superquadric"
+
+    # ==== SHARED PARAMETERS (used by both methods) ====
+    shared:
+      # Point cloud preprocessing
+      poisson_reconstruction: true
+      outlier_removal: true
+      voxel_downsample_size: 0.002
+      
+      # Shared visualization (works for both ICP and superquadric)
+      visualize_fused_point_clouds: true
+      enable_detected_object_clouds_visualization: true
+    
+      # Publishing options
+      publish_poses: true
+      publish_transforms: true
+      target_frame: "panda_link0"
+    
+    # ==== ICP-SPECIFIC PARAMETERS ====
+    icp:
+      model_folder_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/object_models"
+      distance_threshold: 0.03
+      max_iterations: 50
+      convergence_threshold: 1e-6
+      
+      # ICP-specific visualization
+      visualize_icp_alignment: true
+    
+    # ==== SUPERQUADRIC-SPECIFIC PARAMETERS ====
+    superquadric:
+      enabled: true
+      
+      # Fitting parameters
+      outlier_ratio: 0.9
+      use_kmeans_clustering: false
+      max_iterations: 1000
+      convergence_threshold: 1e-6
+      
+      # Grasp planning
+      grasp_planning_enabled: true
+      gripper_jaw_length: 0.037
+      gripper_max_opening: 0.08
+      
+      # Superquadric-specific visualization
+      enable_superquadric_fit_visualization: false
+      enable_all_valid_grasps_visualization: false
+      enable_best_grasps_visualization: false
+      enable_support_test_visualization: false
+      enable_collision_test_visualization: false

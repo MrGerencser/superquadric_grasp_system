@@ -1,4 +1,4 @@
-echo "# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -48,4 +48,4 @@ Thumbs.db
 /tmp/
 
 # Log files
-*.log" > .gitignore
+*.log

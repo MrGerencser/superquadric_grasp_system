@@ -18,14 +18,14 @@ def principal_axis_sweeps(S: Superquadric, G: Gripper, step_deg=10):
     """
     candidate_R = []
     
-    print(f"[INFO] Implementing paper's method: align λ with each principal axis")
+    print(f"[INFO] This implementation assumes gripper closing line λ is along Y-axis (not X-axis as in original paper)")
     print(f"[DEBUG] Principal axes in world frame:")
     print(f"  λ_x: {S.axes_world[:, 0]}")
     print(f"  λ_y: {S.axes_world[:, 1]}")  
     print(f"  λ_z: {S.axes_world[:, 2]}")
     print(f"[DEBUG] Gripper closing line λ: {G.lambda_local}")
     
-    # PAPER METHOD: For each principal axis λi (i = x,y,z)
+    # For each principal axis λi (i = x,y,z)
     for i, axis_world in enumerate(S.axes_world.T):  # iterate over λ_x, λ_y, λ_z
         axis_names = ["λ_x", "λ_y", "λ_z"]
         axis_name = axis_names[i]
@@ -69,20 +69,22 @@ def extra_sweeps_special_shapes(S: Superquadric, base_R_list, G: Gripper):
     """
     §2.2 – For prism-like (ε1→0) or cuboid-like (ε2→0): slide gripper along SQ-local axes in 15mm grid.
             For cylinder-like (ε1→0, ε2=1, ax=ay): rotate about λ_z in π/8 increments.
+    
+    NOTE: This implementation assumes gripper closing line λ is along Y-axis (not X-axis as in original paper)
     """
     R_list_full = list(base_R_list)
     poses_offsets = []
-    return R_list_full, poses_offsets
 
-    # Heuristic thresholds (from the paper)
+    # Heuristic thresholds
     prism_like   = (S.ε1 < 0.3)  # ε1 → 0
     cuboid_like  = (S.ε2 < 0.3)  # ε2 → 0
     
-    # Complete cylinder condition from paper
+    # cylinder condition (most specific, check first)
     cylinder_like = (S.ε1 < 0.3) and (abs(S.ε2 - 1.0) < 0.1) and (abs(S.ax - S.ay) < 0.01)
     
     print(f"[DEBUG] Shape analysis: ε1={S.ε1:.3f}, ε2={S.ε2:.3f}, ax={S.ax:.3f}, ay={S.ay:.3f}")
     print(f"[DEBUG] prism_like={prism_like}, cuboid_like={cuboid_like}, cylinder_like={cylinder_like}")
+    print(f"[DEBUG] Gripper closing line λ is along: {G.lambda_local} (Y-axis)")
 
     # SQ-local axes in world
     λx_w, λy_w, λz_w = S.axes_world[:, 0], S.axes_world[:, 1], S.axes_world[:, 2]
@@ -97,7 +99,7 @@ def extra_sweeps_special_shapes(S: Superquadric, base_R_list, G: Gripper):
         vals = np.arange(-n, n+1) * step
         return vals
 
-    #   Handle cylinder case FIRST (most specific)
+    # Handle cylinder case FIRST (most specific)
     if cylinder_like:
         print(f"[INFO] Detected cylinder shape - adding π/8 rotations around z-axis")
         
@@ -106,7 +108,7 @@ def extra_sweeps_special_shapes(S: Superquadric, base_R_list, G: Gripper):
         axis_world = λz_w
         R_align = rotation_from_u_to_v(G.lambda_local, axis_world)
         
-        # π/8 = 22.5 degrees intervals as per paper
+        # π/8 = 22.5 degrees intervals as per original paper
         for extra_angle in np.arange(0, 360, 22.5):
             R_extra = R.from_rotvec(axis_world * (extra_angle * DEG)).as_matrix()
             R_new = R_extra @ R_align
@@ -118,24 +120,96 @@ def extra_sweeps_special_shapes(S: Superquadric, base_R_list, G: Gripper):
         
         print(f"[INFO] Added {len(poses_offsets)} cylinder rotations")
     
-    # Handle prism/cuboid cases (translation grids)
-    elif prism_like or cuboid_like:
-        print(f"[INFO] Detected prism/cuboid shape - adding translation grid")
+    # Handle prism case (ε1 → 0) - ADJUSTED FOR Y-AXIS CLOSING LINE
+    elif prism_like and not cuboid_like:
+        print(f"[INFO] Detected prism shape - adding translations per original paper method (adapted for Y-axis)")
+
+        # For prism: move along z-axis for λx and λy alignments
+        # move along x,y for λz alignment
+        z_vals = linspace_clamped(S.az)
+        x_vals = linspace_clamped(S.ax) 
+        y_vals = linspace_clamped(S.ay)
         
-        z_vals = linspace_clamped(S.az) if prism_like else np.array([0.0])
-        x_vals = linspace_clamped(S.ax) if (cuboid_like or prism_like) else np.array([0.0])
-        y_vals = linspace_clamped(S.ay) if (cuboid_like or prism_like) else np.array([0.0])
+        # Identify which base rotations correspond to which axis alignments
+        for Rg in base_R_list:
+            # Check which axis the gripper closing direction (Y-axis) is most aligned with
+            closing_world = Rg @ G.lambda_local  # G.lambda_local = [0, 1, 0]
+            
+            # Most aligned axis determines translation directions
+            alignments = [abs(np.dot(closing_world, λx_w)), 
+                         abs(np.dot(closing_world, λy_w)), 
+                         abs(np.dot(closing_world, λz_w))]
+            max_alignment_idx = np.argmax(alignments)
+            
+            if max_alignment_idx == 0:  # Closing line aligned with superquadric λx
+                # when λ aligned with λx, move along z-axis
+                for dz in z_vals:
+                    if dz != 0:
+                        Δt_world = dz * λz_w
+                        poses_offsets.append((Rg, Δt_world))
+            elif max_alignment_idx == 1:  # Closing line aligned with superquadric λy
+                # when λ aligned with λy, move along z-axis
+                for dz in z_vals:
+                    if dz != 0:
+                        Δt_world = dz * λz_w
+                        poses_offsets.append((Rg, Δt_world))
+            else:  # Closing line aligned with superquadric λz
+                # when λ aligned with λz, move along x,y grid on base
+                for dx in x_vals:
+                    for dy in y_vals:
+                        if dx != 0 or dy != 0:
+                            Δt_world = dx * λx_w + dy * λy_w
+                            poses_offsets.append((Rg, Δt_world))
+        
+        print(f"[INFO] Added {len(poses_offsets)} prism translations")
+    
+    # Handle cuboid case (ε2 → 0) - ADJUSTED FOR Y-AXIS CLOSING LINE  
+    elif cuboid_like and not prism_like:
+        print(f"[INFO] Detected cuboid shape - adding translations per original paper method (adapted for Y-axis)")
+
+        x_vals = linspace_clamped(S.ax)
+        y_vals = linspace_clamped(S.ay)
+        
+        for Rg in base_R_list:
+            closing_world = Rg @ G.lambda_local  # G.lambda_local = [0, 1, 0]
+            
+            # Check alignment with x and y axes of superquadric
+            x_alignment = abs(np.dot(closing_world, λx_w))
+            y_alignment = abs(np.dot(closing_world, λy_w))
+            
+            if x_alignment > y_alignment:  # More aligned with superquadric λx
+                # when λ aligned with λx, move along y-axis
+                for dy in y_vals:
+                    if dy != 0:
+                        Δt_world = dy * λy_w
+                        poses_offsets.append((Rg, Δt_world))
+            else:  # More aligned with superquadric λy
+                # when λ aligned with λy, move along x-axis  
+                for dx in x_vals:
+                    if dx != 0:
+                        Δt_world = dx * λx_w
+                        poses_offsets.append((Rg, Δt_world))
+        
+        print(f"[INFO] Added {len(poses_offsets)} cuboid translations")
+    
+    # Handle combined case (both prism and cuboid)
+    elif prism_like and cuboid_like:
+        print(f"[INFO] Detected combined prism+cuboid - using general approach")
+        # Keep your existing general implementation for this case
+        z_vals = linspace_clamped(S.az)
+        x_vals = linspace_clamped(S.ax) 
+        y_vals = linspace_clamped(S.ay)
 
         for Rg in base_R_list:
             for dz in z_vals:
                 for dx in x_vals:
                     for dy in y_vals:
                         if dx == 0 and dy == 0 and dz == 0:
-                            continue  # Skip origin (already in base_R_list)
+                            continue  # Skip origin 
                         Δt_world = dx * λx_w + dy * λy_w + dz * λz_w
                         poses_offsets.append((Rg, Δt_world))
         
-        print(f"[INFO] Added {len(poses_offsets)} grid translations")
+        print(f"[INFO] Added {len(poses_offsets)} combined translations")
 
     return R_list_full, poses_offsets
 

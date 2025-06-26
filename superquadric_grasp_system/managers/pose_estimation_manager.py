@@ -14,16 +14,17 @@ from .base_manager import BaseManager
 from ..utils.transform_utils import create_pose_message
 from ..utils.superquadric_utils import (
     fit_single_superquadric,
-    fit_multiple_superquadrics_ensemble,
-    validate_superquadric
-)
+    fit_multiple_superquadrics,
+    )
 from ..utils.icp_utils import ICPPoseEstimator
 from .grasp_planning_manager import GraspPlanningManager
 from ..visualization.main_visualizer import GraspVisualizer
 
 
 class PoseEstimationManager(BaseManager):
-    """Manages pose estimation using either ICP or superquadric fitting"""
+    """Manages pose estimation using either ICP or superquadric fitting
+       Can be also extended to support other methods in the future
+    """
     
     def __init__(self, node, config):
         super().__init__(node, config)
@@ -168,7 +169,7 @@ class PoseEstimationManager(BaseManager):
             # Initialize pose publisher if enabled
             if self.publish_poses:
                 self.pose_publisher = self.node.create_publisher(
-                    PoseStamped, '/perception/object_pose', 10
+                    PoseStamped, '/perception/object_pose', 1
                 )
             
             # Initialize TF broadcaster if enabled
@@ -178,7 +179,7 @@ class PoseEstimationManager(BaseManager):
             # Subscribe to grasp execution state
             self.execution_state_subscriber = self.node.create_subscription(
                 Bool, '/robot/grasp_executing',
-                self._grasp_execution_callback, 10
+                self._grasp_execution_callback, 1
             )
             
             self.is_initialized = True
@@ -304,51 +305,96 @@ class PoseEstimationManager(BaseManager):
     def _apply_poisson_reconstruction(self, pcd, filtered_points, original_points):
         """Apply Poisson reconstruction (shared method)"""
         try:
+            # Safety check: minimum points required
+            if len(filtered_points) < 100:
+                self.logger.warning("Too few points for Poisson reconstruction, using original")
+                return filtered_points
+                
+            # Check point cloud dimensionality
+            bounds = pcd.get_axis_aligned_bounding_box()
+            dimensions = bounds.get_extent()
+            if np.min(dimensions) < 0.001:  # Very thin in one dimension
+                self.logger.warning("Point cloud too thin for Poisson reconstruction")
+                return filtered_points
+                
             self.logger.info("Applying Poisson reconstruction...")
             
-            # Estimate normals for Poisson reconstruction
-            pcd.estimate_normals()
-            pcd.orient_normals_consistent_tangent_plane(100)
-
-            # Perform Poisson reconstruction
-            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                pcd, depth=9, width=0, scale=1.1, linear_fit=False
+            # Estimate normals with more robust parameters
+            pcd.estimate_normals(
+                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30)
             )
             
+            # Check if normals were computed successfully
+            if not pcd.has_normals() or len(pcd.normals) == 0:
+                self.logger.warning("Failed to compute normals for Poisson reconstruction")
+                return filtered_points
+                
+            # Orient normals more carefully
+            try:
+                pcd.orient_normals_consistent_tangent_plane(k=50)
+            except Exception as normal_error:
+                self.logger.warning(f"Normal orientation failed: {normal_error}")
+                return filtered_points
+
+            # Perform Poisson reconstruction with conservative parameters
+            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                pcd, 
+                depth=8,  # Reduced from 9
+                width=0, 
+                scale=1.0,  # Reduced from 1.1
+                linear_fit=False
+            )
+            
+            # Validate mesh
+            if len(mesh.vertices) == 0 or len(mesh.triangles) == 0:
+                self.logger.warning("Poisson reconstruction produced empty mesh")
+                return filtered_points
+                
             # Remove low-density vertices (noise reduction)
             densities = np.asarray(densities)
-            density_threshold = np.quantile(densities, 0.1)  # Remove bottom 10%
+            if len(densities) == 0:
+                self.logger.warning("No density information from Poisson reconstruction")
+                return filtered_points
+                
+            density_threshold = np.quantile(densities, 0.2)  # More conservative
             vertices_to_remove = densities < density_threshold
             mesh.remove_vertices_by_mask(vertices_to_remove)
             
             # Sample points from the reconstructed mesh
-            num_points = max(len(filtered_points), 1000)  # At least 1000 points
-            reconstructed_pcd = mesh.sample_points_uniformly(number_of_points=num_points)
-            
+            num_points = min(max(len(filtered_points), 1000), 5000)  # Cap at 5000
+            try:
+                reconstructed_pcd = mesh.sample_points_uniformly(number_of_points=num_points)
+            except Exception as sample_error:
+                self.logger.warning(f"Mesh sampling failed: {sample_error}")
+                return filtered_points
+                
             # Get the reconstructed points
             reconstructed_points = np.asarray(reconstructed_pcd.points)
             
             # Validate reconstruction quality
-            if len(reconstructed_points) > 100:
-                # Check if reconstructed points are reasonable (within bounding box of original)
-                original_bounds = np.array([filtered_points.min(axis=0), filtered_points.max(axis=0)])
-                reconstructed_bounds = np.array([reconstructed_points.min(axis=0), reconstructed_points.max(axis=0)])
+            if len(reconstructed_points) < 50:
+                self.logger.warning("Poisson reconstruction produced too few points")
+                return filtered_points
                 
-                # Ensure reconstructed points don't exceed original bounds by too much
-                scale_factor = np.max((reconstructed_bounds[1] - reconstructed_bounds[0]) / 
-                                    (original_bounds[1] - original_bounds[0]))
-                
-                if scale_factor < 2.0:  # Reasonable scale factor
-                    self.logger.info(f"Poisson reconstruction successful: {len(reconstructed_points)} points")
-                    return reconstructed_points
-                else:
-                    self.logger.warning(f"Poisson reconstruction scale factor too large ({scale_factor:.2f}), using original points")
+            # Check bounds reasonableness
+            original_bounds = np.array([filtered_points.min(axis=0), filtered_points.max(axis=0)])
+            reconstructed_bounds = np.array([reconstructed_points.min(axis=0), reconstructed_points.max(axis=0)])
+            
+            scale_factor = np.max((reconstructed_bounds[1] - reconstructed_bounds[0]) / 
+                                (original_bounds[1] - original_bounds[0]))
+            
+            if scale_factor < 3.0:  # More lenient
+                self.logger.info(f"Poisson reconstruction successful: {len(reconstructed_points)} points")
+                return reconstructed_points
             else:
-                self.logger.warning("Poisson reconstruction produced too few points, using original")
+                self.logger.warning(f"Poisson reconstruction scale factor too large ({scale_factor:.2f})")
                 
         except Exception as poisson_error:
-            self.logger.warning(f"Poisson reconstruction failed: {poisson_error}, using filtered points")
+            self.logger.warning(f"Poisson reconstruction failed: {poisson_error}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
         
+        # Always fall back to filtered points
         return filtered_points
 
     def _process_object_with_icp(self, point_cloud, class_id, object_id, workspace_cloud):
@@ -540,7 +586,7 @@ class PoseEstimationManager(BaseManager):
             else:
                 # Multiple superquadrics approach
                 self.logger.info("Using multiple superquadric ensemble fitting")
-                return fit_multiple_superquadrics_ensemble(points, self.outlier_ratio, self.logger)
+                return fit_multiple_superquadrics(points, self.outlier_ratio, self.logger)
                     
         except RecursionError as e:
             self.logger.error(f"Recursion error in superquadric fitting: {e}")

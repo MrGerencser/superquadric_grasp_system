@@ -38,6 +38,7 @@ setup(
     entry_points={
         'console_scripts': [
             'perception_node = superquadric_grasp_system.perception_node:main',
+            'grasp_executor = superquadric_grasp_system.grasp_executor:main',
         ],
     },
 )

@@ -326,12 +326,12 @@ class PerceptionNode(Node):
         """Set up ROS publishers and subscribers (without point cloud publishers)"""
         # Publisher for poses
         self.pose_publisher = self.create_publisher(
-            PoseStamped, '/perception/object_pose', 10)
+            PoseStamped, '/perception/object_pose', 1)
         
         # Subscriber for grasp execution state
         self.execution_state_subscriber = self.create_subscription(
             Bool, '/robot/grasp_executing',
-            self.grasp_execution_callback, 10
+            self.grasp_execution_callback, 1
         )
         
         self.get_logger().info("Publishers and subscribers set up")

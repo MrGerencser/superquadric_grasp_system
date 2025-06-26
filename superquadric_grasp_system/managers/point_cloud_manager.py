@@ -42,11 +42,11 @@ class PointCloudManager(BaseManager):
             # Initialize ROS publishers if publishing is enabled
             if self.publish_point_clouds:
                 self.fused_workspace_publisher = self.node.create_publisher(
-                    PointCloud2, '/perception/fused_workspace_cloud', 10)
+                    PointCloud2, '/perception/fused_workspace_cloud', 1)
                 self.fused_objects_publisher = self.node.create_publisher(
-                    PointCloud2, '/perception/fused_objects_cloud', 10)
+                    PointCloud2, '/perception/fused_objects_cloud', 1)
                 self.subtracted_cloud_publisher = self.node.create_publisher(
-                    PointCloud2, '/perception/subtracted_cloud', 10)
+                    PointCloud2, '/perception/subtracted_cloud', 1)
                 self.logger.info("Point cloud publishers initialized")
             
             self.is_initialized = True

@@ -210,32 +210,6 @@ def validate_superquadric(sq, points: np.ndarray) -> bool:
     except Exception:
         return False
 
-
-def validate_superquadric_strict(sq, points: np.ndarray) -> bool:
-    """Stricter validation for superquadrics"""
-    try:
-        # Check scale bounds
-        if np.any(sq.scale < 0.003) or np.any(sq.scale > 0.5):
-            return False
-        
-        # Check shape parameters
-        if np.any(np.array(sq.shape) < 0.1) or np.any(np.array(sq.shape) > 4.0):
-            return False
-        
-        # Check translation bounds
-        point_center = np.mean(points, axis=0)
-        point_bounds = np.max(points, axis=0) - np.min(points, axis=0)
-        max_deviation = np.linalg.norm(point_bounds) * 0.5
-        
-        if np.linalg.norm(sq.translation - point_center) > max_deviation:
-            return False
-        
-        return True
-        
-    except Exception:
-        return False
-
-
 def evaluate_sq_coverage(sq, points: np.ndarray, logger=None) -> float:
     """Evaluate how well a superquadric covers the point cloud"""
     try:

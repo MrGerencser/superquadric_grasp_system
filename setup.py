@@ -6,6 +6,8 @@ package_name = 'superquadric_grasp_system'
 
 # Get launch files if they exist
 launch_files = glob('launch/*.py')
+
+# Get config files if they exist
 config_files = glob('config/*.yaml')
 
 # Build data_files list conditionally

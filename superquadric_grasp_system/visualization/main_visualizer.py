@@ -809,12 +809,14 @@ class PerceptionVisualizer:
     # MAIN VISUALIZATION METHODS
     # =============================================================================
     
-    def visualize_superquadric_grasps(self, point_cloud_path: str = None, point_cloud_data: np.ndarray = None,
-                                    superquadric_params: Union[Dict, List[Dict]] = None, 
-                                    grasp_poses: Union[np.ndarray, List] = None,
-                                    show_sweep_volume: bool = False, gripper_colors: List = None,
-                                    window_name: str = "Superquadric Grasp Visualization",
-                                    align_finger_tips: bool = True) -> None:
+    def visualize_grasps(self, point_cloud_path: str = None, point_cloud_data: np.ndarray = None,
+                        superquadric_params: Union[Dict, List[Dict]] = None, 
+                        grasp_poses: Union[np.ndarray, List] = None,
+                        show_sweep_volume: bool = False, gripper_colors: List = None,
+                        window_name: str = "Superquadric Grasp Visualization",
+                        align_finger_tips: bool = True, 
+                        cad_model_path: str = None,
+                        reference_model: o3d.geometry.PointCloud = None) -> None:
         """Main visualization method for superquadric grasps with smart view centering"""
         geometries = []
         
@@ -830,6 +832,24 @@ class PerceptionVisualizer:
             pcd.points = o3d.utility.Vector3dVector(point_cloud_data)
             pcd.paint_uniform_color([0.7, 0.7, 0.7])
             geometries.append(pcd)
+        
+        # Add reference model (preferred over CAD model path)
+        if reference_model is not None:
+            reference_copy = o3d.geometry.PointCloud(reference_model)
+            reference_copy.paint_uniform_color([0.0, 0.0, 1.0])  # Blue for reference model
+            geometries.append(reference_copy)
+        # Add CAD model if provided and no reference model
+        elif cad_model_path is not None:
+            try:
+                cad_mesh = o3d.io.read_triangle_mesh(cad_model_path)
+                if cad_mesh.is_empty():
+                    print(f"CAD model is empty: {cad_model_path}")
+                else:
+                    cad_mesh.compute_vertex_normals()
+                    cad_mesh.paint_uniform_color([0.0, 0.0, 1.0])  # Blue color
+                    geometries.append(cad_mesh)
+            except Exception as e:
+                print(f"Error loading CAD model: {e}")
         
         # Add superquadric meshes
         if superquadric_params is not None:
@@ -1049,7 +1069,7 @@ class PerceptionVisualizer:
             [0, 0, 0, 1]
         ])
         
-        self.visualize_superquadric_grasps(
+        self.visualize_grasps(
             point_cloud_data=cube_points,
             superquadric_params=sq_params,
             grasp_poses=grasp_pose,

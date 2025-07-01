@@ -219,7 +219,7 @@ class SuperquadricEstimator(BaseEstimator):
             # All valid grasps visualization
             if self.enable_all_grasps_visualization and all_grasp_poses:
                 try:
-                    self.visualizer.visualize_superquadric_grasps(
+                    self.visualizer.visualize_grasps(
                         point_cloud_data=processed_points,
                         superquadric_params=superquadric_params,
                         grasp_poses=all_grasp_poses,
@@ -233,7 +233,7 @@ class SuperquadricEstimator(BaseEstimator):
             # Best grasp visualization
             if self.enable_best_grasp_visualization and best_grasp_pose is not None:
                 try:
-                    self.visualizer.visualize_superquadric_grasps(
+                    self.visualizer.visualize_grasps(
                         point_cloud_data=processed_points,
                         superquadric_params=superquadric_params,
                         grasp_poses=[best_grasp_pose],  # Only the best grasp

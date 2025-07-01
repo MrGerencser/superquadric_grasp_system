@@ -68,8 +68,13 @@ perception:
       max_iterations: 50
       convergence_threshold: 1e-6
       
+      ## Grasp planning for ICP
+      grasp_planning_enabled: true
+      max_grasp_candidates: 3
+      
       # ICP-specific visualization
       visualize_icp_alignment: true
+      visualize_grasp_poses: true
     
     # ==== SUPERQUADRIC-SPECIFIC PARAMETERS ====
     superquadric:

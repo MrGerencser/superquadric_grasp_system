@@ -3,9 +3,9 @@ import numpy as np
 import open3d as o3d
 import traceback
 from typing import Optional, Dict, Any, Tuple, Union
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation as R_simple
 from geometry_msgs.msg import PoseStamped, TransformStamped
-from tf2_ros import TransformBroadcaster
+import yaml
 
 
 class ICPPoseEstimator:
@@ -33,6 +33,13 @@ class ICPPoseEstimator:
         
         # Load reference models
         self._load_reference_models()
+        
+        # Grasp poses storage
+        self.grasp_poses = {}
+        
+        # Load reference models and grasp poses
+        self._load_reference_models()
+        self._load_grasp_poses()
     
     def _load_reference_models(self):
         """Load reference models for each object class"""
@@ -78,6 +85,64 @@ class ICPPoseEstimator:
             if self.logger:
                 self.logger.error(f"Failed to load reference models: {e}")
                 self.logger.error(traceback.format_exc())
+                
+    def _load_grasp_poses(self):
+        """Load pre-defined grasp poses for each object class"""
+        try:
+            for class_id, class_name in self.class_names.items():
+                grasp_file_path = os.path.join(self.model_folder_path, f"{class_name}_grasps.yaml")
+                
+                if os.path.exists(grasp_file_path):
+                    with open(grasp_file_path, 'r') as file:
+                        grasp_data = yaml.safe_load(file)
+                        self.grasp_poses[class_id] = grasp_data.get('grasps', [])
+                        
+                    if self.logger:
+                        self.logger.info(f"Loaded {len(self.grasp_poses[class_id])} grasp poses for class {class_id}")
+                else:
+                    self.grasp_poses[class_id] = []
+                    if self.logger:
+                        self.logger.warning(f"No grasp poses file found: {grasp_file_path}")
+                        
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to load grasp poses: {e}")
+                
+    def get_transformed_grasp_poses(self, transformation_matrix: np.ndarray, class_id: int, max_grasps: int = 3):
+        """Transform pre-defined grasp poses using ICP result"""
+        if class_id not in self.grasp_poses or not self.grasp_poses[class_id]:
+            return []
+        
+        transformed_grasps = []
+        
+        for grasp in self.grasp_poses[class_id]:
+            try:
+                # Extract grasp pose relative to object
+                rel_position = np.array(grasp['position'])
+                rel_orientation = np.array(grasp['orientation'])  # euler angles
+                
+                # Create relative transformation matrix
+                rel_rotation = R_simple.from_euler('xyz', rel_orientation).as_matrix()
+                rel_transform = np.eye(4)
+                rel_transform[:3, :3] = rel_rotation
+                rel_transform[:3, 3] = rel_position
+                
+                # Transform to world coordinates using ICP result
+                world_transform = transformation_matrix @ rel_transform
+                
+                transformed_grasps.append({
+                    'name': grasp['name'],
+                    'pose': world_transform,
+                    'position': world_transform[:3, 3].tolist(),
+                    'orientation': R_simple.from_matrix(world_transform[:3, :3]).as_euler('xyz').tolist()
+                })
+                
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"Failed to transform grasp {grasp.get('name', 'unknown')}: {e}")
+                continue
+                    
+        return transformed_grasps[:max_grasps]
     
     def estimate_pose(self, observed_data: Union[o3d.geometry.PointCloud, np.ndarray], 
                  class_id: int, full_cloud: Optional[Union[o3d.geometry.PointCloud, np.ndarray]] = None) -> Optional[np.ndarray]:
@@ -316,7 +381,7 @@ class ICPPoseEstimator:
         
         # Extract rotation and convert to quaternion
         rotation_matrix = transformation_matrix[:3, :3]
-        r = Rotation.from_matrix(rotation_matrix)
+        r = R_simple.from_matrix(rotation_matrix)
         quat = r.as_quat()  # [x, y, z, w]
         
         pose_msg.pose.orientation.x = quat[0]
@@ -341,7 +406,7 @@ class ICPPoseEstimator:
         
         # Rotation
         rotation_matrix = transformation_matrix[:3, :3]
-        r = Rotation.from_matrix(rotation_matrix)
+        r = R_simple.from_matrix(rotation_matrix)
         quat = r.as_quat()
         
         transform.transform.rotation.x = quat[0]

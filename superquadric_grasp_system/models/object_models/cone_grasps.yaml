@@ -1,0 +1,10 @@
+grasps:
+  - name: "top_grasp"
+    position: [0.0, 0.0, 0.03]  
+    orientation: [3.14159, 0.0, 0.0]
+  - name: "side_grasp_1"
+    position: [0.0, 0.0, 0.03]
+    orientation: [0.0, 1.57, 0.0]
+  - name: "side_grasp_2"
+    position: [0.0, 0.0, 0.03]
+    orientation: [0.0, -1.57, 0.0]

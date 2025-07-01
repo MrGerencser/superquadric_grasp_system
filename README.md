@@ -1,6 +1,7 @@
 # Superquadric Grasp System
 
 A ROS2-based robotic grasping system that uses superquadric shape fitting for intelligent object manipulation with Franka Emika robots.
+Based on Learning-Free Grasping of Unknown Objects Using Hidden Superquadrics Paper
 
 ## Overview
 

@@ -14,8 +14,8 @@ perception:
   
   # Camera parameters
   camera:
-    camera1_sn: 33137761
-    camera2_sn: 32689769
+    camera1_sn: 34783283
+    camera2_sn: 39725782
     transform_file_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/config/transform.yaml"
     resolution: HD1080  # HD720 , HD1080, HD2K
   
@@ -53,8 +53,8 @@ perception:
       voxel_downsample_size: 0.002
       
       # Shared visualization (works for both ICP and superquadric)
-      visualize_fused_point_clouds: false
-      enable_detected_object_clouds_visualization: false
+      visualize_fused_point_clouds: true
+      enable_detected_object_clouds_visualization: true
     
       # Publishing options
       publish_poses: true
@@ -87,8 +87,8 @@ perception:
       gripper_max_opening: 0.08
       
       # Superquadric-specific visualization
-      enable_superquadric_fit_visualization: false
-      enable_all_valid_grasps_visualization: false
-      enable_best_grasps_visualization: false
-      enable_support_test_visualization: false
-      enable_collision_test_visualization: false
+      enable_superquadric_fit_visualization: true
+      enable_all_valid_grasps_visualization: true
+      enable_best_grasps_visualization: true
+      enable_support_test_visualization: true
+      enable_collision_test_visualization: true

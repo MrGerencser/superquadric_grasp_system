@@ -71,7 +71,7 @@ class GraspExecutor(Node):
                 'state_check': 0.1  # seconds between state checks
             },
             'drop_box': {
-                'x': 0.25, 'y': 0.63, 'z': 0.05
+                'x': 0.25, 'y': 0.23, 'z': 0.05
             }
         }
         

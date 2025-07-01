@@ -1,20 +1,24 @@
+# superquadric_grasp_system/visualization/main_visualizer.py 
+import os, sys
+# so that "superquadric_grasp_system" is on PYTHONPATH when running this file directly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
 import numpy as np
 import open3d as o3d
-import cv2
-import os
 from typing import Dict, List, Optional, Any, Tuple, Union
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation as R_simple
+import traceback
 
 # Import from your existing modules
-from ..utils.grasp_planning.geometric_primitives import Gripper, Superquadric
-
+# from ..utils.grasp_planning.geometric_primitives import Gripper, Superquadric
+from superquadric_grasp_system.utils.grasp_planning.geometric_primitives import Gripper, Superquadric
 
 # =============================================================================
 # GRASP VISUALIZATION
 # =============================================================================
 
-class GraspVisualizer:
-    """Unified grasp and superquadric visualization handler"""
+class PerceptionVisualizer:
+    """Unified perception visualization handler"""
     
     def __init__(self, config: Dict = None):
         self.config = config or {}
@@ -221,7 +225,7 @@ class GraspVisualizer:
             return None
     
     # =============================================================================
-    # SUPERQUADRIC FIT VISUALIZATION $
+    # SUPERQUADRIC FIT VISUALIZATION
     # =============================================================================
     
     def visualize_superquadric_fit(self, points: np.ndarray, all_sqs: List[Any], 
@@ -403,7 +407,7 @@ class GraspVisualizer:
             point_omega = uniformSampledSuperellipse(shape_stable[1], [scale[0], scale[1]], 1e-2, 10000, 0.2)
             
             # Create rotation matrix from Euler angles
-            R = Rotation.from_euler('xyz', euler).as_matrix()
+            R = R_simple.from_euler('xyz', euler).as_matrix()
             
             # Preallocate meshgrid
             x_mesh = np.ones((np.shape(point_omega)[1], np.shape(point_eta)[1]))
@@ -444,7 +448,7 @@ class GraspVisualizer:
             mesh.scale([1, scale[1]/scale[0], scale[2]/scale[0]], center=(0, 0, 0))
             
             # Rotate
-            R = Rotation.from_euler('xyz', euler).as_matrix()
+            R = R_simple.from_euler('xyz', euler).as_matrix()
             mesh.rotate(R, center=(0, 0, 0))
             
             # Translate
@@ -802,88 +806,6 @@ class GraspVisualizer:
             traceback.print_exc()
 
     # =============================================================================
-    # MULTI-SUPERQUADRIC VISUALIZATION
-    # =============================================================================
-    
-    def visualize_multi_sq_grasps(self, points: np.ndarray, superquadrics: List[Any], 
-                                 all_grasps_data: List[Dict], window_name: str = "Multi-SQ Grasps", 
-                                 highlight_final: bool = True) -> None:
-        """Visualize grasps for multiple superquadrics with optional highlighting"""
-        geometries = []
-        
-        # Add point cloud
-        if points is not None:
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(points)
-            pcd.paint_uniform_color([0.7, 0.7, 0.7])
-            geometries.append(pcd)
-        
-        # Add superquadric meshes
-        for i, sq in enumerate(superquadrics):
-            try:
-                sq_params = {
-                    'shape': np.array([sq.ε1, sq.ε2]),
-                    'scale': np.array([sq.ax, sq.ay, sq.az]),
-                    'euler': Rotation.from_matrix(sq.R).as_euler('xyz'),
-                    'translation': sq.T
-                }
-                
-                sq_mesh = self.create_superquadric_mesh(
-                    shape=sq_params['shape'],
-                    scale=sq_params['scale'],
-                    euler=sq_params['euler'],
-                    translation=sq_params['translation']
-                )
-                
-                if sq_mesh is not None:
-                    color = self.superquadric_colors[i % len(self.superquadric_colors)]
-                    sq_mesh.paint_uniform_color(color)
-                    geometries.append(sq_mesh)
-                    
-            except Exception as e:
-                print(f"Error creating superquadric {i+1}: {e}")
-        
-        # Add grasp visualizations
-        for i, grasp in enumerate(all_grasps_data):
-            try:
-                # Use different colors for final vs non-final grasps
-                if highlight_final and grasp.get('is_final', False):
-                    color = self.filter_colors['final']
-                    show_sweep = True
-                else:
-                    color = self.gripper_colors[i % len(self.gripper_colors)]
-                    show_sweep = False
-                
-                # Create gripper visualization
-                gripper_meshes = self.get_gripper_meshes(
-                    grasp['pose'],
-                    show_sweep_volume=show_sweep,
-                    color=color
-                )
-                
-                geometries.extend(gripper_meshes)
-                
-            except Exception as e:
-                print(f"Error creating grasp visualization {i+1}: {e}")
-        
-        # Add main coordinate frame
-        main_coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
-        geometries.append(main_coord_frame)
-        
-        # Visualize all geometries
-        if len(geometries) > 0:       
-            o3d.visualization.draw_geometries(
-                geometries,
-                window_name=window_name,
-                zoom=0.7,
-                front=[0, -1, 0],
-                lookat=[0, 0, 0],
-                up=[0, 0, 1]
-            )
-        else:
-            print("No geometries to visualize!")
-
-    # =============================================================================
     # MAIN VISUALIZATION METHODS
     # =============================================================================
     
@@ -985,34 +907,6 @@ class GraspVisualizer:
         else:
             print("No geometries to visualize!")
            
-    def calculate_optimal_view_params(self, geometries):
-        """Calculate optimal view parameters based on all geometries"""
-        all_points = []
-        
-        for geom in geometries:
-            if hasattr(geom, 'vertices') and len(geom.vertices) > 0:
-                all_points.extend(np.asarray(geom.vertices))
-            elif hasattr(geom, 'points') and len(geom.points) > 0:
-                all_points.extend(np.asarray(geom.points))
-        
-        if not all_points:
-            return np.array([0, 0, 0]), 0.7
-        
-        all_points = np.array(all_points)
-        
-        # Calculate bounding box
-        min_bound = np.min(all_points, axis=0)
-        max_bound = np.max(all_points, axis=0)
-        
-        # Calculate center and size
-        center = (min_bound + max_bound) / 2
-        size = np.max(max_bound - min_bound)
-        
-        # Calculate appropriate zoom level
-        zoom = max(0.3, min(1.0, 0.2 / max(size, 0.1)))
-        
-        return center, zoom
-    
     def get_view_center_priority(self, pcd, superquadric_params, grasp_poses):
         """Get view center with priority: point cloud > superquadrics > grasps > origin"""
         
@@ -1077,12 +971,12 @@ class GraspVisualizer:
                 position = np.array(grasp_input['position'])
                 if 'quaternion' in grasp_input:
                     quat = np.array(grasp_input['quaternion'])  # [x, y, z, w]
-                    R = Rotation.from_quat(quat).as_matrix()
+                    R = R_simple.from_quat(quat).as_matrix()
                 elif 'rotation_matrix' in grasp_input:
                     R = np.array(grasp_input['rotation_matrix'])
                 elif 'euler' in grasp_input:
                     euler = np.array(grasp_input['euler'])
-                    R = Rotation.from_euler('xyz', euler).as_matrix()
+                    R = R_simple.from_euler('xyz', euler).as_matrix()
                 else:
                     R = np.eye(3)
                 
@@ -1095,8 +989,8 @@ class GraspVisualizer:
                 position, quat = grasp_input
                 position = np.array(position)
                 quat = np.array(quat)  # [x, y, z, w]
-                R = Rotation.from_quat(quat).as_matrix()
-                
+                R = R_simple.from_quat(quat).as_matrix()
+
                 transform = np.eye(4)
                 transform[:3, :3] = R
                 transform[:3, 3] = position
@@ -1109,6 +1003,10 @@ class GraspVisualizer:
         except Exception as e:
             print(f"Error parsing grasp pose: {e}")
             return np.eye(4)
+        
+    # =============================================================================
+    # DEMO AND TESTING
+    # =============================================================================
     
     def create_cubic_object(self, size: float = 0.05, center: Tuple[float, float, float] = (0, 0, 0), 
                           color: Tuple[float, float, float] = (0.8, 0.2, 0.2)) -> o3d.geometry.TriangleMesh:
@@ -1122,43 +1020,7 @@ class GraspVisualizer:
         cube.paint_uniform_color(color)
         cube.compute_vertex_normals()
         return cube
-    
-    def add_grasp_overlay_to_frame(self, frame: np.ndarray, grasp_data: Dict) -> np.ndarray:
-        """Add grasp information overlay to camera frame"""
-        try:
-            frame_copy = frame.copy()
-            
-            # Add grasp count
-            grasp_poses = grasp_data.get('grasp_poses', [])
-            if grasp_poses:
-                cv2.putText(frame_copy, f"Grasps: {len(grasp_poses)}", 
-                           (frame.shape[1] - 150, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            
-            # Add quality info if available
-            if 'average_quality' in grasp_data:
-                quality = grasp_data['average_quality']
-                cv2.putText(frame_copy, f"Quality: {quality:.2f}", 
-                           (frame.shape[1] - 150, 60), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            
-            # Add superquadric count if available
-            if 'superquadric_count' in grasp_data:
-                sq_count = grasp_data['superquadric_count']
-                cv2.putText(frame_copy, f"SQs: {sq_count}", 
-                           (frame.shape[1] - 150, 90), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            
-            return frame_copy
-            
-        except Exception as e:
-            print(f"Error adding grasp overlay: {e}")
-            return frame
 
-    # =============================================================================
-    # DEMO AND TESTING
-    # =============================================================================
-    
     def demo_visualization(self) -> None:
         """Demo showing basic visualization functionality"""
         # Create cube point cloud
@@ -1192,21 +1054,8 @@ class GraspVisualizer:
             superquadric_params=sq_params,
             grasp_poses=grasp_pose,
             show_sweep_volume=True,
-            window_name="GraspVisualizer Demo"
+            window_name="PerceptionVisualizer Demo"
         )
-
-
-# =============================================================================
-# BACKWARD COMPATIBILITY FUNCTIONS
-# =============================================================================
-
-def get_gripper_control_points_o3d(grasp_transform, gripper=None, show_sweep_volume=False,
-                                  color=(0.2, 0.8, 0), finger_tip_to_origin=True):
-    """Backward compatibility function"""
-    visualizer = GraspVisualizer()
-    return visualizer.get_gripper_meshes(grasp_transform, gripper, show_sweep_volume, 
-                                       color, finger_tip_to_origin)
-
 
 # =============================================================================
 # MAIN DEMO
@@ -1214,5 +1063,5 @@ def get_gripper_control_points_o3d(grasp_transform, gripper=None, show_sweep_vol
 
 if __name__ == "__main__":
     # Run demo
-    visualizer = GraspVisualizer()
+    visualizer = PerceptionVisualizer()
     visualizer.demo_visualization()

@@ -1,7 +1,7 @@
 import numpy as np
 import open3d as o3d
 from scipy.spatial import KDTree
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R_simple
 
 from .geometric_primitives import Superquadric, Gripper, rotation_from_u_to_v
 from .grasp_filters import support_test, collision_test, score_grasp, sample_superquadric_surface
@@ -44,7 +44,7 @@ def principal_axis_sweeps(S: Superquadric, G: Gripper, step_deg=10):
             theta_rad = theta_deg * DEG
             
             # Create rotation around the principal axis
-            R_spin = R.from_rotvec(axis_world * theta_rad).as_matrix()
+            R_spin = R_simple.from_rotvec(axis_world * theta_rad).as_matrix()
             
             # Combined rotation: first align, then spin
             R_final = R_spin @ R_align
@@ -110,7 +110,7 @@ def extra_sweeps_special_shapes(S: Superquadric, base_R_list, G: Gripper):
         
         # π/8 = 22.5 degrees intervals as per original paper
         for extra_angle in np.arange(0, 360, 22.5):
-            R_extra = R.from_rotvec(axis_world * (extra_angle * DEG)).as_matrix()
+            R_extra = R_simple.from_rotvec(axis_world * (extra_angle * DEG)).as_matrix()
             R_new = R_extra @ R_align
             key = tuple(np.round(R_new, 6).ravel())
             if key not in seen:
@@ -371,57 +371,7 @@ class SuperquadricGraspPlanner:
                 print("[WARNING] No valid grasps found after filtering.")
                 return []
 
-            # 6.4 Filter grasp approaches from below table
-            table_height = -0.03
-            G_above_table = []
-
-            for Rg, tg in G_valid:
-                try:
-                    # Check 1: Grasp position must be above table
-                    if tg[2] <= table_height + 0.01:  # 1cm safety margin
-                        continue
-                    
-                    # Check 2: Approach direction (no approaches from below)
-                    gripper_z_world = Rg[:, 2]
-                    actual_approach_direction = -gripper_z_world
-                    approach_z = float(actual_approach_direction[2])
-                    
-                    if approach_z < -0.5:  # Reject steep downward approaches
-                        continue
-                    
-                    # Check 3: Finger tip positions above table
-                    closing_dir = Rg @ G.lambda_local
-                    half_open = G.max_open / 2.0
-                    tip1 = tg + closing_dir * half_open
-                    tip2 = tg - closing_dir * half_open
-                    
-                    if tip1[2] <= table_height + 0.005 or tip2[2] <= table_height + 0.005:
-                        continue
-                    
-                    # Check 4: Gripper body collision with table
-                    gripper_extent_in_approach = G.jaw_len + G.palm_depth
-                    furthest_point = tg + actual_approach_direction * gripper_extent_in_approach
-                    
-                    if furthest_point[2] <= table_height + 0.01:
-                        continue
-                    
-                    # All checks passed
-                    G_above_table.append((Rg, tg))
-                    
-                except Exception as e:
-                    print(f"Error in table filtering: {e}")
-                    continue
-
-            print(f"[INFO] {len(G_above_table)}/{len(G_valid)} grasps remain after table approach filtering.")
-
-            if len(G_above_table) == 0:
-                print("[WARNING] No grasps remain after table filtering.")
-                return []
-
-            # Update G_valid to be the filtered set
-            G_valid = G_above_table
-
-            # 6.5 Score remaining candidates (Step 4)
+            # 6.4 Score remaining candidates
             scores = []
             for i, (Rg, tg) in enumerate(G_valid):
                 score = score_grasp(Rg, tg, S, G, kdtree)
@@ -471,9 +421,7 @@ class SuperquadricGraspPlanner:
             robot_origin = np.array([0.0, 0.0, 0.0])
             preferred_approach = np.array([0.0, 0.0, 1.0])  # Approach from above
             
-            # All grasp_data_list entries are assumed to be valid
-            
-            print(f"[SELECTION] Scoring {len(grasp_data_list)} pre-validated grasps")
+            # All grasp_data_list entries are tested for support and collision
             
             # Score all valid grasps (no filtering, just scoring)
             best_score = -float('inf')
@@ -515,11 +463,12 @@ class SuperquadricGraspPlanner:
                     approach_alignment = np.dot(actual_approach_direction, preferred_approach)
                     approach_score = max(0.0, approach_alignment)
                     
-                    # Approach angle preference (not filtering)
-                    if approach_z < 0.3:
-                        approach_penalty = 1.0 * (0.3 - approach_z)  # Reduced penalty
-                    else:
-                        approach_penalty = 0.0
+                    # Strong penalty for approaches from below table
+                    below_table_penalty = 0.0
+                    if approach_z < -0.5:  # Approaching from significantly below
+                        below_table_penalty = 5.0 * abs(approach_z)  # Heavy penalty
+                    elif approach_z < 0.0:  # Any downward approach
+                        below_table_penalty = 2.0 * abs(approach_z)  # Moderate penalty
                     
                     # Point cloud distance scoring (if available)
                     point_cloud_distance_score = 0.0
@@ -557,8 +506,8 @@ class SuperquadricGraspPlanner:
                         2.0 * approach_score +                # Approach direction preference
                         1.0 * workspace_score +               # Workspace preference
                         1.0 * point_cloud_distance_score +    # Object proximity preference
-                        -reach_penalty -                      # Penalties
-                        -approach_penalty
+                        -reach_penalty                        # Penalties
+                        -below_table_penalty
                     )
                     
                     # Debug output for first few grasps
@@ -659,32 +608,4 @@ class SuperquadricGraspPlanner:
             points.append(crossbar_point)
         
         return points
-    
-    def plan_grasps_with_best_selection(self, point_cloud_path, shape, scale, euler, translation, max_grasps=5):
-        """
-        Enhanced plan_grasps that includes intelligent best grasp selection
-        
-        Returns:
-            Tuple: (all_grasp_data, best_grasp_data)
-        """
-        # Get all diverse grasps using existing method
-        all_grasp_data = self.plan_grasps(point_cloud_path, shape, scale, euler, translation, max_grasps)
-        
-        if not all_grasp_data:
-            return [], None
-        
-        # Load point cloud for distance calculations
-        try:
-            pcd = o3d.io.read_point_cloud(point_cloud_path)
-            point_cloud = np.asarray(pcd.points) if pcd.has_points() else None
-        except Exception as e:
-            print(f"Warning: Could not load point cloud for distance calculations: {e}")
-            point_cloud = None
-        
-        # Select the best grasp using multi-criteria (now with point cloud distance)
-        object_center = np.mean([data['translation'] for data in all_grasp_data], axis=0)
-        best_grasp_data = self.select_best_grasp_with_criteria(all_grasp_data, object_center, point_cloud)
-        
-        return all_grasp_data, best_grasp_data
-
     

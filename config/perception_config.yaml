@@ -43,7 +43,7 @@ perception:
 
   # Pose estimation configuration
   pose_estimation:
-    method: "superquadric"  # "icp" or "superquadric"
+    method: "icp"  # "icp" or "superquadric"
 
     # ==== SHARED PARAMETERS (used by both methods) ====
     shared:
@@ -77,7 +77,7 @@ perception:
       
       # Fitting parameters
       outlier_ratio: 0.99
-      use_kmeans_clustering: true
+      use_kmeans_clustering: false
       max_iterations: 1000
       convergence_threshold: 1e-6
       

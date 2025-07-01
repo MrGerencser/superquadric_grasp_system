@@ -1,8 +1,7 @@
 import numpy as np
 import open3d as o3d
 from scipy.spatial import KDTree
-from scipy.spatial.transform import Rotation as R
-from ...visualization.main_visualizer import GraspVisualizer
+from ...visualization.main_visualizer import PerceptionVisualizer
 
 def support_test(R, t, S, G, kdtree, κ=12, r_support=None, h_support=0.02, 
                 debug_mode=False, max_debug_calls=5):
@@ -89,7 +88,7 @@ def support_test(R, t, S, G, kdtree, κ=12, r_support=None, h_support=0.02,
                     'support_result': support_result
                 }
                 
-                visualizer = GraspVisualizer()
+                visualizer = PerceptionVisualizer()
                 visualizer.visualize_support_test(
                     point_cloud=kdtree.data,
                     grasp_pose=T,
@@ -267,7 +266,7 @@ def collision_test(R_world, t_world, S, G, kdtree, debug_mode=False, max_debug_c
                     'collision_result': collision_result
                 }
                 
-                visualizer = GraspVisualizer()
+                visualizer = PerceptionVisualizer()
                 visualizer.visualize_collision_test(
                     point_cloud=kdtree.data,
                     grasp_pose=T,

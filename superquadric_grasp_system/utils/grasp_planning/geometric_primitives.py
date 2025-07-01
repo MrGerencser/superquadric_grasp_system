@@ -1,6 +1,6 @@
 import numpy as np
 import open3d as o3d
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R_simple
 
 class Superquadric:
     def __init__(self, ε, a, euler, t):
@@ -9,7 +9,7 @@ class Superquadric:
         self.ax, self.ay, self.az = a
         self.T = np.asarray(t, dtype=float)        # Center in world frame
         # 3×3 rotation matrix from SQ‐local → world
-        self.R = R.from_euler('xyz', euler).as_matrix()
+        self.R = R_simple.from_euler('xyz', euler).as_matrix()
 
     @property
     def axes_world(self):
@@ -141,8 +141,8 @@ def rotation_from_u_to_v(u, v):
             perp = np.array([0.0, 1.0, 0.0])
         axis = np.cross(u, perp)
         axis = axis / np.linalg.norm(axis)
-        return R.from_rotvec(axis * np.pi).as_matrix()
+        return R_simple.from_rotvec(axis * np.pi).as_matrix()
     axis = np.cross(u, v)
     axis = axis / np.linalg.norm(axis)
     angle = np.arccos(np.clip(dot, -1.0, 1.0))
-    return R.from_rotvec(axis * angle).as_matrix()
+    return R_simple.from_rotvec(axis * angle).as_matrix()

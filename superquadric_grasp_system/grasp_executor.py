@@ -11,7 +11,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.callback_groups import ReentrantCallbackGroup
 import numpy as np
 import time
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation as R_simple
 from enum import Enum
 
 
@@ -293,7 +293,7 @@ class GraspExecutor(Node):
     
     def _create_home_pose(self):
         """Create home pose"""
-        home_rotation = Rotation.from_euler('xyz', [np.pi, 0.0, 0.0])
+        home_rotation = R_simple.from_euler('xyz', [np.pi, 0.0, 0.0])
         home_quat = home_rotation.as_quat()  # x, y, z, w
         return self._create_pose(
             0.5, 0.0, 0.35, 
@@ -302,7 +302,7 @@ class GraspExecutor(Node):
     
     def _create_drop_pose(self):
         """Create drop pose at the box location"""
-        home_rotation = Rotation.from_euler('xyz', [np.pi, 0.0, 0.0])
+        home_rotation = R_simple.from_euler('xyz', [np.pi, 0.0, 0.0])
         drop_quat = home_rotation.as_quat()
         
         return self._create_pose(
@@ -378,7 +378,7 @@ class GraspExecutor(Node):
         ])
         
         # Calculate gripper angle
-        euler = Rotation.from_quat(quat).as_euler('xyz', degrees=True)
+        euler = R_simple.from_quat(quat).as_euler('xyz', degrees=True)
         alpha_deg = euler[0] - 180.0
         alpha_rad = np.radians(alpha_deg)
         

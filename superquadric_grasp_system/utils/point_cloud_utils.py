@@ -3,6 +3,184 @@ import numpy as np
 from typing import Tuple, List
 import open3d as o3d
 
+class PointCloudProcessor:
+    """Handles shared point cloud preprocessing operations"""
+    
+    def __init__(self, config):
+        self.poisson_reconstruction = config.get('poisson_reconstruction', False)
+        self.outlier_removal = config.get('outlier_removal', True)
+        self.voxel_downsample_size = config.get('voxel_downsample_size', 0.002)
+        
+        # Visualization settings
+        self.enable_detected_object_clouds_visualization = config.get('enable_detected_object_clouds_visualization', False)
+        self.visualizer = None  # Will be set by the estimator if needed
+        self.logger = None      # Will be set by the estimator if needed
+    
+    def set_visualization_components(self, visualizer, logger):
+        """Set visualization components from the estimator"""
+        self.visualizer = visualizer
+        self.logger = logger
+    
+    def preprocess(self, point_cloud, class_id=None):
+        """Unified preprocessing for both ICP and superquadric methods"""
+        try:
+            # Convert numpy array to appropriate format if needed
+            if isinstance(point_cloud, np.ndarray):
+                if len(point_cloud.shape) != 2 or point_cloud.shape[1] != 3:
+                    if self.logger:
+                        self.logger.error(f"Invalid point cloud shape: {point_cloud.shape}")
+                    return None
+            else:
+                # Convert other formats to numpy array
+                point_cloud = np.asarray(point_cloud)
+            
+            # Store original points for visualization
+            original_object_points = point_cloud.copy()
+            
+            # Create point cloud
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(point_cloud)
+            
+            # Apply outlier removal if enabled
+            if self.outlier_removal:
+                pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.0)
+                pcd, _ = pcd.remove_radius_outlier(nb_points=16, radius=0.05)
+            
+            # Downsample
+            if self.voxel_downsample_size > 0:
+                pcd = pcd.voxel_down_sample(voxel_size=self.voxel_downsample_size)
+            
+            if len(pcd.points) < 50:  # Minimum threshold for both methods
+                if self.logger:
+                    self.logger.warning(f"Too few points after preprocessing: {len(pcd.points)}")
+                return None
+            
+            filtered_object_points = np.asarray(pcd.points)
+            
+            # Apply Poisson reconstruction if enabled (shared)
+            if self.poisson_reconstruction:
+                filtered_object_points = self.apply_poisson_reconstruction(
+                    pcd, filtered_object_points, original_object_points
+                )
+            
+            # Shared visualization: detected cloud filtering
+            if self.enable_detected_object_clouds_visualization and self.visualizer:
+                try:
+                    object_center = np.mean(original_object_points, axis=0)
+                    self.visualizer.visualize_detected_cloud_filtering(
+                        original_points=original_object_points,
+                        filtered_points=filtered_object_points,
+                        class_id=class_id if class_id is not None else 0,
+                        object_center=object_center
+                    )
+                except Exception as viz_error:
+                    if self.logger:
+                        self.logger.warning(f"Detected cloud filtering visualization failed: {viz_error}")
+            
+            return filtered_object_points
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error preprocessing point cloud: {e}")
+            return None
+    
+    # ... rest of your existing methods
+    
+    def apply_poisson_reconstruction(self, pcd, filtered_points, original_points):
+        """Apply Poisson reconstruction"""
+        try:
+            # Safety check: minimum points required
+            if len(filtered_points) < 100:
+                self.logger.warning("Too few points for Poisson reconstruction, using original")
+                return filtered_points
+                
+            # Check point cloud dimensionality
+            bounds = pcd.get_axis_aligned_bounding_box()
+            dimensions = bounds.get_extent()
+            if np.min(dimensions) < 0.001:  # Very thin in one dimension
+                self.logger.warning("Point cloud too thin for Poisson reconstruction")
+                return filtered_points
+                
+            self.logger.info("Applying Poisson reconstruction...")
+            
+            # Estimate normals with more robust parameters
+            pcd.estimate_normals(
+                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30)
+            )
+            
+            # Check if normals were computed successfully
+            if not pcd.has_normals() or len(pcd.normals) == 0:
+                self.logger.warning("Failed to compute normals for Poisson reconstruction")
+                return filtered_points
+                
+            # Orient normals more carefully
+            try:
+                pcd.orient_normals_consistent_tangent_plane(k=50)
+            except Exception as normal_error:
+                self.logger.warning(f"Normal orientation failed: {normal_error}")
+                return filtered_points
+
+            # Perform Poisson reconstruction with conservative parameters
+            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                pcd, 
+                depth=8,  # Reduced from 9
+                width=0, 
+                scale=1.0,  # Reduced from 1.1
+                linear_fit=False
+            )
+            
+            # Validate mesh
+            if len(mesh.vertices) == 0 or len(mesh.triangles) == 0:
+                self.logger.warning("Poisson reconstruction produced empty mesh")
+                return filtered_points
+                
+            # Remove low-density vertices (noise reduction)
+            densities = np.asarray(densities)
+            if len(densities) == 0:
+                self.logger.warning("No density information from Poisson reconstruction")
+                return filtered_points
+                
+            density_threshold = np.quantile(densities, 0.2)  # More conservative
+            vertices_to_remove = densities < density_threshold
+            mesh.remove_vertices_by_mask(vertices_to_remove)
+            
+            # Sample points from the reconstructed mesh
+            num_points = min(max(len(filtered_points), 1000), 5000)  # Cap at 5000
+            try:
+                reconstructed_pcd = mesh.sample_points_uniformly(number_of_points=num_points)
+            except Exception as sample_error:
+                self.logger.warning(f"Mesh sampling failed: {sample_error}")
+                return filtered_points
+                
+            # Get the reconstructed points
+            reconstructed_points = np.asarray(reconstructed_pcd.points)
+            
+            # Validate reconstruction quality
+            if len(reconstructed_points) < 50:
+                self.logger.warning("Poisson reconstruction produced too few points")
+                return filtered_points
+                
+            # Check bounds reasonableness
+            original_bounds = np.array([filtered_points.min(axis=0), filtered_points.max(axis=0)])
+            reconstructed_bounds = np.array([reconstructed_points.min(axis=0), reconstructed_points.max(axis=0)])
+            
+            scale_factor = np.max((reconstructed_bounds[1] - reconstructed_bounds[0]) / 
+                                (original_bounds[1] - original_bounds[0]))
+            
+            if scale_factor < 3.0:  # More lenient
+                self.logger.info(f"Poisson reconstruction successful: {len(reconstructed_points)} points")
+                return reconstructed_points
+            else:
+                self.logger.warning(f"Poisson reconstruction scale factor too large ({scale_factor:.2f})")
+                
+        except Exception as poisson_error:
+            self.logger.warning(f"Poisson reconstruction failed: {poisson_error}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+        
+        # Always fall back to filtered points
+        return filtered_points
+    
 
 def crop_point_cloud_gpu(point_cloud: torch.Tensor, 
                         x_bounds: Tuple[float, float],

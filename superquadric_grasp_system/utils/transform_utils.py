@@ -3,7 +3,7 @@ import yaml
 from typing import Dict, List, Tuple, Optional
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R_simple
 
 
 def create_pose_message(position: List[float], 
@@ -44,7 +44,7 @@ def create_pose_message(position: List[float],
         pose_msg.pose.orientation.w = float(orientation[3])
     elif len(orientation) == 3:
         # Euler angles [roll, pitch, yaw] - convert to quaternion
-        r = R.from_euler('xyz', orientation)
+        r = R_simple.from_euler('xyz', orientation)
         quat = r.as_quat()  # Returns [x, y, z, w]
         pose_msg.pose.orientation.x = float(quat[0])
         pose_msg.pose.orientation.y = float(quat[1])
@@ -139,7 +139,7 @@ def quaternion_to_rotation_matrix(quaternion: List[float]) -> np.ndarray:
     Returns:
         3x3 rotation matrix
     """
-    r = R.from_quat(quaternion)
+    r = R_simple.from_quat(quaternion)
     return r.as_matrix()
 
 
@@ -153,7 +153,7 @@ def rotation_matrix_to_quaternion(rotation_matrix: np.ndarray) -> List[float]:
     Returns:
         [x, y, z, w] quaternion
     """
-    r = R.from_matrix(rotation_matrix)
+    r = R_simple.from_matrix(rotation_matrix)
     return r.as_quat().tolist()
 
 
@@ -167,7 +167,7 @@ def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> List[float]:
     Returns:
         [x, y, z, w] quaternion
     """
-    r = R.from_euler('xyz', [roll, pitch, yaw])
+    r = R_simple.from_euler('xyz', [roll, pitch, yaw])
     return r.as_quat().tolist()
 
 
@@ -181,5 +181,5 @@ def quaternion_to_euler(quaternion: List[float]) -> Tuple[float, float, float]:
     Returns:
         (roll, pitch, yaw) in radians
     """
-    r = R.from_quat(quaternion)
+    r = R_simple.from_quat(quaternion)
     return tuple(r.as_euler('xyz'))

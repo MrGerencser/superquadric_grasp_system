@@ -177,8 +177,6 @@ class ICPEstimator(BaseEstimator):
                 
         except Exception as e:
             self.logger.error(f"ICP grasp visualization failed: {e}")
-            import traceback
-            traceback.print_exc()
     
     def _needs_visualization(self) -> bool:
         return (self.shared_config.get('visualize_fused_point_clouds', False) or 

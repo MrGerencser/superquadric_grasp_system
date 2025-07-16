@@ -14,8 +14,8 @@ perception:
   
   # Camera parameters
   camera:
-    camera1_sn: 34783283
-    camera2_sn: 39725782
+    camera1_sn: 32689769
+    camera2_sn: 34783283
     transform_file_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/config/transform.yaml"
     resolution: HD1080  # HD720 , HD1080, HD2K
   
@@ -39,11 +39,10 @@ perception:
     distance_threshold: 0.4
     require_both_cameras: true
     publish_point_clouds: false
-    target_frame: "panda_link0"
 
   # Pose estimation configuration
   pose_estimation:
-    method: "icp"  # "icp" or "superquadric"
+    method: "superquadric"  # "icp" or "superquadric"
 
     # ==== SHARED PARAMETERS (used by both methods) ====
     shared:
@@ -53,13 +52,12 @@ perception:
       voxel_downsample_size: 0.002
       
       # Shared visualization (works for both ICP and superquadric)
-      visualize_fused_point_clouds: true
+      visualize_fused_workspace: true
       enable_detected_object_clouds_visualization: true
     
       # Publishing options
       publish_poses: true
       publish_transforms: true
-      target_frame: "panda_link0"
     
     # ==== ICP-SPECIFIC PARAMETERS ====
     icp:
@@ -97,3 +95,5 @@ perception:
       enable_best_grasps_visualization: true
       enable_support_test_visualization: true
       enable_collision_test_visualization: true
+
+

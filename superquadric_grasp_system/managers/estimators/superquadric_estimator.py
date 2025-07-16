@@ -1,7 +1,7 @@
 # superquadric_grasp_system/managers/estimators/superquadric_estimator.py 
 from .base_estimator import BaseEstimator
 from ...utils.superquadric_utils import fit_single_superquadric, fit_multiple_superquadrics
-from ...utils.grasp_planning.superquadric_grasp_planner import SuperquadricGraspPlanner
+from ...utils.superquadric_grasp_planning.superquadric_grasp_planner import SuperquadricGraspPlanner
 from scipy.spatial.transform import Rotation as R_simple
 import numpy as np
 

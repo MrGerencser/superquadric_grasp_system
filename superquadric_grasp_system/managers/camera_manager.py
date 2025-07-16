@@ -261,6 +261,37 @@ class CameraManager(BaseManager):
         except Exception as e:
             self.logger.error(f"Error getting point clouds: {e}")
             return None, None
+        
+    def get_rgb_point_clouds(self) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """Get RGB point clouds from both cameras"""
+        try:
+            # Capture frames
+            frame1, frame2 = self.capture_frames()
+            if frame1 is None or frame2 is None:
+                return None, None
+            
+            # Get depth maps
+            depth1, depth2 = self.get_depth_maps()
+            if depth1 is None or depth2 is None:
+                return None, None
+            
+            # Convert to tensors
+            rgb1_tensor = torch.tensor(frame1, dtype=torch.float32, device=self.device).permute(2, 0, 1) / 255.0
+            rgb2_tensor = torch.tensor(frame2, dtype=torch.float32, device=self.device).permute(2, 0, 1) / 255.0
+            
+            depth1_tensor = torch.tensor(depth1, dtype=torch.float32, device=self.device)
+            depth2_tensor = torch.tensor(depth2, dtype=torch.float32, device=self.device)
+            
+            # Combine RGB and depth into point clouds
+            pc1 = torch.cat((rgb1_tensor.view(3, -1), depth1_tensor.view(1, -1)), dim=0).T
+            pc2 = torch.cat((rgb2_tensor.view(3, -1), depth2_tensor.view(1, -1)), dim=0).T
+            
+            return pc1, pc2
+            
+        except Exception as e:
+            self.logger.error(f"Error getting RGB point clouds: {e}")
+            return None, None
+        
     
     def is_ready(self) -> bool:
         """Check if cameras are ready"""

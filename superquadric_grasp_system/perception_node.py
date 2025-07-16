@@ -5,9 +5,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Header, Bool
-import sensor_msgs_py.point_cloud2 as pc2
-from typing import Dict, Any, Optional
+from std_msgs.msg import Bool
+from typing import Dict, Any
 import yaml
 from ament_index_python.packages import get_package_share_directory
 import os
@@ -47,30 +46,21 @@ class PerceptionNode(Node):
     # --------------------------------------- MAIN PROCESSING --------------------------------------------
     
     def process_frames(self):
-        """Main processing loop (runs at 10 Hz for heavy processing)"""
+        """Main processing loop"""
         try:
             start_time = time.time()
                     
-            # Step 1: Capture frames from cameras
+            # Step 1: Capture camera data
             frame1, frame2 = self.camera_manager.capture_frames()
-            if frame1 is None or frame2 is None:
-                return
-
-            # Step 2: Get depth maps
             depth1, depth2 = self.camera_manager.get_depth_maps()
-            if depth1 is None or depth2 is None:
-                return
             
-            # Step 3: Process point clouds
+            # Step 2: Process point clouds
             pc1_cropped, pc2_cropped, fused_workspace_np, pcd_fused_workspace = self.point_cloud_manager.process_point_clouds(self.camera_manager) 
 
-            # Step 4: Run object detection
-            frames_list = [frame1, frame2]
-            results1, results2, class_ids1, class_ids2 = self.detection_manager.detect_objects(frames_list)
-            if not results1 or not results2:
-                return
+            # Step 3: Run object detection
+            results1, results2, class_ids1, class_ids2 = self.detection_manager.detect_objects([frame1, frame2])
 
-            # Step 5: Process object point clouds - pass fused_workspace_np for subtraction
+            # Step 4: Process object point clouds - pass fused_workspace_np for subtraction
             fused_object_points, fused_object_classes, fused_objects_np, subtracted_cloud = \
                 self.point_cloud_manager.extract_object_point_clouds(
                     results1, results2, class_ids1, class_ids2,
@@ -91,30 +81,19 @@ class PerceptionNode(Node):
                 self.latest_frames = {'camera1': frame1, 'camera2': frame2}
                 self.latest_detection_results = (results1, results2)
                 self.latest_point_cloud_data = point_cloud_data
-            
-            if not point_cloud_data:
-                return
 
             object_point_clouds = point_cloud_data.get('object_point_clouds', [])
             object_classes = point_cloud_data.get('object_classes', [])
 
-            # Step 6: Process detected objects for pose estimation
-            if object_point_clouds and self.pose_estimation_manager.is_ready():
-                workspace_cloud = point_cloud_data.get('fused_workspace', None)
-                
-                # Debug: Log data types
-                self.get_logger().debug(f"Processing {len(object_point_clouds)} objects for pose estimation")
-                for i, (pc, class_id) in enumerate(zip(object_point_clouds, object_classes)):
-                    self.get_logger().debug(f"Object {i}: type={type(pc)}, class={class_id}")
-                    if isinstance(pc, np.ndarray):
-                        self.get_logger().debug(f"  - Shape: {pc.shape}")
-                    elif hasattr(pc, 'points'):
-                        self.get_logger().debug(f"  - Points: {len(pc.points)}")
+            # Step 5: Process detected objects for pose estimation
+            if object_point_clouds:
+                if self.pose_estimation_manager.is_ready():
+                    workspace_cloud = point_cloud_data.get('fused_workspace', None)
                 
                 success = self.pose_estimation_manager.process_objects(
                     object_point_clouds, object_classes, workspace_cloud
                 )
-                
+            
                 if success:
                     self.get_logger().debug(f"Pose estimation completed successfully using {self.pose_estimation_method} method")
 
@@ -126,8 +105,6 @@ class PerceptionNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"Error in process_frames: {e}")
-            import traceback
-            self.get_logger().error(traceback.format_exc())
     
     # --------------------------------------- CONFIGURATION --------------------------------------------
     
@@ -166,6 +143,8 @@ class PerceptionNode(Node):
         pose_config = self.config['perception']['pose_estimation']
         web_config = self.config['perception'].get('web_interface', {})
         
+        point_cloud_config = self.config['perception'].get('point_cloud', {})
+        
         viz_config = {
             # Web interface
             'web_enabled': web_config.get('enabled', False),
@@ -181,7 +160,7 @@ class PerceptionNode(Node):
             **pose_config.get('icp', {}),
             
             # Shared visualizations
-            'enable_workspace_visualization': False,
+            'visualize_fused_workspace': point_cloud_config.get('visualize_fused_workspace', False),
             'enable_detected_object_clouds_visualization': pose_config.get('enable_detected_object_clouds_visualization', False)
         }
         
@@ -234,7 +213,6 @@ class PerceptionNode(Node):
         
         self.point_cloud_manager = PointCloudManager(self, {
             **base_config['point_cloud'],
-            'visualize_fused_workspace': viz_config.get('enable_workspace_visualization', False)
         })
         
         self.pose_estimation_manager = PoseEstimationManager(self, {
@@ -335,7 +313,7 @@ class PerceptionNode(Node):
                 time.sleep(1.0 / self.web_update_rate)  # Use web-specific update rate
             except Exception as e:
                 self.get_logger().error(f"Error in live capture worker: {e}")
-    
+            
     # --------------------------------------- CLEANUP --------------------------------------------
     
     def cleanup(self):

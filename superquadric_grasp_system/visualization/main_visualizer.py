@@ -11,7 +11,7 @@ import traceback
 
 # Import from your existing modules
 # from ..utils.grasp_planning.geometric_primitives import Gripper, Superquadric
-from superquadric_grasp_system.utils.grasp_planning.geometric_primitives import Gripper, Superquadric
+from superquadric_grasp_system.utils.superquadric_grasp_planning.geometric_primitives import Gripper, Superquadric
 
 # =============================================================================
 # GRASP VISUALIZATION
@@ -613,9 +613,7 @@ class PerceptionVisualizer:
             geometries.append(main_coord_frame)
             
             # Print legend
-            print(f"\n{'='*60}")
             print(f"SUPPORT TEST VISUALIZATION:")
-            print(f"{'='*60}")
             print(f"  🟫 Gray:    Background points (not supporting)")
             tip1_status = "✅ PASS" if cnt1 >= required_points else "❌ FAIL"
             tip2_status = "✅ PASS" if cnt2 >= required_points else "❌ FAIL"
@@ -626,7 +624,7 @@ class PerceptionVisualizer:
             print(f"  🤖 Robot:   Gripper geometry")
             print(f"  🟢 Green cylinders: Sufficient support")
             print(f"  🔴 Red cylinders:   Insufficient support")
-            print(f"{'='*60}")
+            print(f"{'-'*60}")
             print(f"  Support cylinder radius: {r_support:.3f}m")
             print(f"  Support cylinder height: {2*h_support:.3f}m")
             print(f"  Required points per tip: {required_points}")
@@ -772,9 +770,7 @@ class PerceptionVisualizer:
             geometries.append(main_coord_frame)
             
             # Print legend
-            print(f"\n{'='*60}")
             print(f"TWO-SLAB COLLISION TEST VISUALIZATION:")
-            print(f"{'='*60}")
             print(f"  🟫 Gray:    Background points (outside large slab)")
             print(f"  🟢 Green:   Safe grasping points (inside cylinder)")
             print(f"  🟠 Orange:  Potential collision (outside cylinder in small slab)")
@@ -783,7 +779,7 @@ class PerceptionVisualizer:
             print(f"  🟣 Magenta: FINGER collision points")
             print(f"  🔵 Blue:    Collision cylinder (small slab)")
             print(f"  🤖 Robot:   Gripper geometry")
-            print(f"{'='*60}")
+            print(f"{'-'*60}")
             print(f"  Small slab height: {2*half_height_cylinder:.3f}m")
             print(f"  Large slab height: {2*half_height_finger:.3f}m")
             print(f"  Cylinder radius: {radius:.3f}m")

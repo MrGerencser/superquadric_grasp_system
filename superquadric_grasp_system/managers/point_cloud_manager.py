@@ -7,13 +7,7 @@ from std_msgs.msg import Header
 import sensor_msgs_py.point_cloud2 as pc2
 from .base_manager import BaseManager
 from .camera_manager import CameraManager
-from ..utils.point_cloud_utils import (
-    crop_point_cloud_gpu, 
-    convert_mask_to_3d_points,
-    downsample_point_cloud_gpu,
-    fuse_point_clouds_centroid,
-    subtract_point_clouds_gpu,
-)
+from ..utils.point_cloud_utils import PointCloudProcessor
 
 class PointCloudManager(BaseManager):
     """Manages point cloud processing and fusion"""
@@ -28,13 +22,14 @@ class PointCloudManager(BaseManager):
         
         # Publishing settings
         self.publish_point_clouds = config.get('publish_point_clouds', True)
-        self.target_frame = config.get('target_frame', 'panda_link0')
+        shared_config = config.get('shared', {})
+        self.point_cloud_processor = PointCloudProcessor(shared_config)
         
         # ROS publishers (will be initialized in initialize())
         self.fused_workspace_publisher = None
         self.fused_objects_publisher = None
         self.subtracted_cloud_publisher = None
-        self.visualize_fused_workspace = config.get('visualize_fused_workspace', True)
+        self.visualize_fused_workspace = config.get('visualize_fused_workspace', False)
 
     def initialize(self) -> bool:
         """Initialize point cloud manager and ROS publishers"""
@@ -107,6 +102,10 @@ class PointCloudManager(BaseManager):
             # Fuse workspace point clouds
             fused_workspace_np = np.vstack([pc1_cropped, pc2_cropped])
             
+            # If fused_workspace is empty log a warning
+            if fused_workspace_np.size == 0:
+                self.logger.warning("Fused workspace point cloud is empty after cropping")
+            
             # Create Open3D point cloud for the fused result
             pcd_fused_workspace = o3d.geometry.PointCloud()
             pcd_fused_workspace.points = o3d.utility.Vector3dVector(fused_workspace_np)
@@ -156,7 +155,7 @@ class PointCloudManager(BaseManager):
 
                         if mask_indices.numel() > 0: 
                             with torch.amp.autocast('cuda'):
-                                points_3d = convert_mask_to_3d_points(
+                                points_3d = self.convert_mask_to_3d_points(
                                     mask_indices, depth_map1_torch, 
                                     cx1, cy1, fx1, fy1
                                 )
@@ -191,7 +190,7 @@ class PointCloudManager(BaseManager):
 
                         if mask_indices.numel() > 0: 
                             with torch.amp.autocast('cuda'):
-                                points_3d = convert_mask_to_3d_points(
+                                points_3d = self.point_cloud_processor.convert_mask_to_3d_points(
                                     mask_indices, depth_map2_torch,
                                     cx2, cy2, fx2, fy2
                                 )
@@ -214,7 +213,7 @@ class PointCloudManager(BaseManager):
                         torch.cuda.empty_cache()
 
             # Fuse object point clouds
-            _, _, fused_objects = fuse_point_clouds_centroid(
+            _, _, fused_objects = self.point_cloud_processor.fuse_point_clouds_centroid(
                 point_clouds_camera1, 
                 point_clouds_camera2, 
                 distance_threshold=self.distance_threshold,
@@ -292,7 +291,7 @@ class PointCloudManager(BaseManager):
         """Create ROS header for point cloud messages"""
         header = Header()
         header.stamp = self.node.get_clock().now().to_msg()
-        header.frame_id = self.target_frame
+        header.frame_id = "panda_link0"
         return header
 
     def _is_object_in_workspace(self, object_points: np.ndarray, coverage_threshold: float = 0.5) -> bool:

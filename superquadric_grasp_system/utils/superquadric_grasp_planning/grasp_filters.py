@@ -52,7 +52,8 @@ def support_test(R, t, S, G, kdtree, κ=12, r_support=None, h_support=0.02,
         
         if support_test.debug_call_count <= max_debug_calls:
             try:
-                print(f"\n[SUPPORT DEBUG #{support_test.debug_call_count}]")
+                print(f"\n{'='*60}")
+                print(f"[SUPPORT DEBUG #{support_test.debug_call_count}]")
                 print(f"  Closing direction: {closing_dir}")
                 print(f"  Grasp center: {t}")
                 print(f"  Tip1 center: {tip1}")
@@ -104,8 +105,6 @@ def support_test(R, t, S, G, kdtree, κ=12, r_support=None, h_support=0.02,
 
 def collision_test(R_world, t_world, S, G, kdtree, debug_mode=False, max_debug_calls=5):
     """
-    CORRECTED IMPLEMENTATION with two-slab logic:
-    
     1. Small slab (cylinder region): for safe grasping area
     2. Large slab (includes fingers): for collision detection
     
@@ -226,7 +225,8 @@ def collision_test(R_world, t_world, S, G, kdtree, debug_mode=False, max_debug_c
                 finger_region_count = len(finger_region_points)
                 cylinder_collision_count = len(potential_collision_points_from_cylinder)
                 
-                print(f"\n[COLLISION DEBUG #{collision_test.debug_call_count}] - TWO-SLAB LOGIC")
+                print(f"\n{'='*60}")
+                print(f"[COLLISION DEBUG #{collision_test.debug_call_count}] - TWO-SLAB LOGIC")
                 print(f"  Small slab (cylinder): half_height={half_height_cylinder:.4f}m, radius={radius:.4f}m")
                 print(f"  Large slab (w/fingers): half_height={half_height_finger:.4f}m")
                 print(f"  Closing direction λ: {λ_dir}")
@@ -354,197 +354,63 @@ def check_palm_collision(points, gripper_center, R_world, gripper):
     collisions = in_approach_region & within_palm_width & within_palm_height
     return collisions
 
-def score_grasp(R, t, S, G, kdtree, surface_tol=0.005):
+def score_grasp(R, t, S, Y, *,
+                d_th=0.05,           # coverage distance threshold
+                q_alpha=0.002,       # goodness-of-fit decay
+                q_gamma=0.5,         # curvature-flatness decay
+                q_delta=0.005,       # COM-distance decay
+                kdtree=None,
+                contact_pts=None,
+                superquadric_fn=None):
     """
-    superquadric implicit function
+    Evaluate one grasp candidate.
+
+    Parameters
+    ----------
+    R, t : ndarray
+        3×3 rotation and 3-vector translation of the gripper in the object frame.
+    S : (M,3) ndarray
+        Dense, uniform samples on the recovered superquadric surface.
+    Y : (N,3) ndarray
+        Object points associated with that superquadric.
+    ...
+
+    Returns
+    -------
+    Overall score h = hα·hβ·hγ·hδ
+    Individual components (hα, hβ, hγ, hδ).
     """
-    X = kdtree.data
-    N = X.shape[0]
-    
-    # Transform to SQ-local coordinates
-    rel = X - S.T
-    pts_local = rel @ S.R.T
-    
-    surface_tol = 0.05 * min(S.ax, S.ay, S.az)
-    
-    # superquadric implicit function
-    # Standard form: ((|x/a1|^(2/ε2) + |y/a2|^(2/ε2))^(ε2/ε1) + |z/a3|^(2/ε1))^(1/1) = 1
-    
-    # Avoid division by zero
-    safe_ax = max(S.ax, 1e-6)
-    safe_ay = max(S.ay, 1e-6) 
-    safe_az = max(S.az, 1e-6)
-    safe_eps1 = max(S.ε1, 0.1)
-    safe_eps2 = max(S.ε2, 0.1)
-    
-    # Normalized coordinates
-    x_norm = np.abs(pts_local[:, 0]) / safe_ax
-    y_norm = np.abs(pts_local[:, 1]) / safe_ay
-    z_norm = np.abs(pts_local[:, 2]) / safe_az
-    
-    # CORRECT EQUATION: F(x,y,z) = ((x/a)^(2/ε2) + (y/b)^(2/ε2))^(ε2/ε1) + (z/c)^(2/ε1)
-    try:
-        # Handle potential numerical issues with small exponents
-        eps_ratio_xy = 2.0 / safe_eps2
-        eps_ratio_z = 2.0 / safe_eps1
-        eps_power = safe_eps2 / safe_eps1
-        
-        # Compute terms with clamping to avoid overflow
-        x_term = np.power(np.clip(x_norm, 1e-10, 1e10), eps_ratio_xy)
-        y_term = np.power(np.clip(y_norm, 1e-10, 1e10), eps_ratio_xy)
-        z_term = np.power(np.clip(z_norm, 1e-10, 1e10), eps_ratio_z)
-        
-        # Combine xy terms
-        xy_combined = np.power(np.clip(x_term + y_term, 1e-10, 1e10), eps_power)
-        
-        # Final implicit function value
-        implicit_values = xy_combined + z_term
-        
-        # Distance from surface (F = 1)
-        surface_distances = np.abs(implicit_values - 1.0)
 
-    except Exception as eq_error:
-        print(f"    [ERROR] Equation computation failed: {eq_error}")
-        # Fallback: assume no surface points
-        surface_distances = np.full(len(pts_local), 1000.0)
-    
-    # ADAPTIVE SURFACE TOLERANCE: Scale with object size
-    char_size = (safe_ax * safe_ay * safe_az) ** (1/3)
-    base_tolerance = 0.1  # Base tolerance for implicit function
-    size_scaled_tolerance = base_tolerance * max(0.5, char_size / 0.05)  # Scale with object size
-    
-    # Surface mask with adaptive tolerance
-    surface_mask = surface_distances < size_scaled_tolerance
-    Y = X[surface_mask]
-    
-    if len(Y) == 0:
-        # FALLBACK: If no surface points, use proximity-based approach
-        # Find points within reasonable distance of SQ center
-        distances_from_center = np.linalg.norm(rel, axis=1)
-        max_reasonable_distance = np.max([safe_ax, safe_ay, safe_az]) * 2.0
-        
-        proximity_mask = distances_from_center < max_reasonable_distance
-        Y_fallback = X[proximity_mask]
-        
-        if len(Y_fallback) > 10:
-            Y = Y_fallback[:min(100, len(Y_fallback))]  # Limit to avoid computation issues
-        else:
-            h_α = 0.0
-            h_β = 0.0
-            α = float('inf')
-            β = 0.0
-    
-    if len(Y) > 0:
-        # h_α: Point-to-surface distance (using actual superquadric surface)
-        try:
-            S_surface = sample_superquadric_surface(S, n_samples=500)  # Reduced samples for performance
-            if len(S_surface) > 0:
-                tree_surface = KDTree(S_surface)
-                distances_Y_to_S, _ = tree_surface.query(Y)
-                α = np.mean(distances_Y_to_S)
-                
-                # Scale q_α with object size
-                q_α = 0.001 * (char_size / 0.05)  # Scale with object size
-                h_α = np.exp(- (α**2) / q_α)
-            else:
-                α = float('inf')
-                h_α = 0.0
-        except Exception as alpha_error:
-            print(f"    [ERROR] h_α computation failed: {alpha_error}")
-            α = float('inf')
-            h_α = 0.0
+    # ---------- Goodness of fit (hα) ----------
+    if kdtree is None:
+        kdtree = KDTree(Y)
+    d2, _ = kdtree.query(S, k=1)
+    alpha = d2.mean()
+    h_alpha = np.exp(-(alpha**2) / q_alpha)
 
-        # h_β: Coverage
-        try:
-            if len(S_surface) > 0:
-                tree_Y = KDTree(Y)
-                d_th = char_size * 0.2  # Scale coverage threshold with object size
-                distances_S_to_Y, _ = tree_Y.query(S_surface)
-                T_mask = distances_S_to_Y <= d_th
-                T_count = np.sum(T_mask)
-                β = T_count / len(S_surface)
-                h_β = β**2
-            else:
-                β = 0.0
-                h_β = 0.0
-        except Exception as beta_error:
-            print(f"    [ERROR] h_β computation failed: {beta_error}")
-            β = 0.0
-            h_β = 0.0
-    
-    # h_γ and h_δ calculations
-    closing_dir = R @ G.lambda_local
-    half_open = G.max_open / 2.0
-    
-    tip1_world = t + closing_dir * half_open
-    tip2_world = t - closing_dir * half_open
-    
-    curv1 = gaussian_curvature_at_point(tip1_world, S)
-    curv2 = gaussian_curvature_at_point(tip2_world, S)
-    γ = (curv1 + curv2) / 2.0
-    
-    q_γ = 0.5
-    h_γ = np.exp(- (γ**2) / q_γ)
+    # ---------- Coverage (hβ) ----------
+    covered = (d2 <= d_th**2)
+    beta = covered.sum() / S.shape[0]
+    h_beta = beta**2
 
-    centroid = np.mean(X, axis=0)
-    δ = np.linalg.norm(t - centroid)
-    q_δ = 0.005
-    h_δ = np.exp(- (δ**2) / q_δ)
+    # ---------- Curvature flatness (hγ) ----------
+    if contact_pts is None:
+        contact_pts = np.repeat(t[None, :], 2, axis=0)   # trivial placeholder
+    def gauss_curv(p, eps=1e-4):
+        ring = p + np.vstack([np.eye(3), -np.eye(3)]) * eps
+        f = kdtree.query(ring)[0]
+        return np.abs(f.mean() - f.min())
+    gamma = np.mean([gauss_curv(p) for p in contact_pts])
+    h_gamma = np.exp(-(gamma**2) / q_gamma)
 
-    final_score = h_α * h_β * h_γ * h_δ
-    return final_score
+    # ---------- COM distance (hδ) ----------
+    com   = Y.mean(axis=0)
+    pg    = contact_pts.mean(axis=0)
+    delta = np.linalg.norm(pg - com)
+    h_delta = np.exp(-(delta**2) / q_delta)
 
-def gaussian_curvature_at_point(point_world, S):
-    """
-    Compute Gaussian curvature of superquadric surface at a given world point.
-    Scale-aware curvature for small objects
-    """
-    # Transform point to SQ-local coordinates
-    point_local = S.R.T @ (point_world - S.T)
-    x, y, z = point_local
-    
-    eps1, eps2 = S.ε1, S.ε2
-    ax, ay, az = S.ax, S.ay, S.az
-    
-    # Calculate characteristic size (geometric mean of scales)
-    char_size = (ax * ay * az) ** (1/3)  # Geometric mean
-    
-    # NEW: Normalize curvature by object size
-    # For the paper's method, typical objects are 10-20cm
-    # Your objects are 2-4cm, so we need to scale accordingly
-    
-    reference_size = 0.10  # 10cm reference size (typical for paper)
-    size_ratio = char_size / reference_size
-    
-    # Base curvature from shape parameters (conservative)
-    if eps1 < 0.5 or eps2 < 0.5:
-        shape_factor = 2.0  # Box-like, higher curvature at edges
-    elif eps1 > 1.5 and eps2 > 1.5:
-        shape_factor = 0.3  # Sphere-like, lower curvature
-    else:
-        shape_factor = 1.0  # Ellipsoid-like, moderate
-    
-    # Smaller objects get LOWER curvature penalty (counter-intuitive but needed for small objects)
-    size_normalized_factor = 1.0 / (size_ratio + 0.5)  # Add 0.5 to prevent division issues
-    
-    # Position factor: very conservative for small objects
-    r_local = np.sqrt((x/ax)**2 + (y/ay)**2 + (z/az)**2)
-    position_factor = 1.0 + 0.2 * r_local  # Much more conservative
-    
-    # FINAL: Combine all factors with small object compensation
-    base_curvature = shape_factor * size_normalized_factor * position_factor
-    
-    # CRITICAL: For very small objects, clamp to much lower range
-    if char_size < 0.05:  # Objects smaller than 5cm
-        max_curvature = 1.5  # Much lower max for small objects
-    elif char_size < 0.10:  # Objects smaller than 10cm
-        max_curvature = 2.5
-    else:
-        max_curvature = 5.0  # Original max for larger objects
-    
-    gaussian_curv = np.clip(base_curvature, 0.1, max_curvature)
-    
-    return gaussian_curv
+    # ---------- Overall score ----------
+    return h_alpha * h_beta * h_gamma * h_delta, (h_alpha, h_beta, h_gamma, h_delta)
 
 def sample_superquadric_surface(S, n_samples=1000):
     """

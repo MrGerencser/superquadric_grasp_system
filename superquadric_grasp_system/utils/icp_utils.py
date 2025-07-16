@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import open3d as o3d
-import traceback
 from typing import Optional, Dict, Any, Tuple, Union
 from scipy.spatial.transform import Rotation as R_simple
 from geometry_msgs.msg import PoseStamped, TransformStamped
@@ -84,7 +83,6 @@ class ICPPoseEstimator:
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to load reference models: {e}")
-                self.logger.error(traceback.format_exc())
                 
     def _load_grasp_poses(self):
         """Load pre-defined grasp poses for each object class"""
@@ -330,7 +328,6 @@ class ICPPoseEstimator:
         except Exception as e:
             if self.logger:
                 self.logger.error(f"ICP estimation failed for class {class_id}: {e}")
-                self.logger.error(traceback.format_exc())
             return None
     
     def _get_pca_basis(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:

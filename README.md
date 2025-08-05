@@ -1,21 +1,62 @@
 # Superquadric Grasp System
 
-A ROS2-based robotic grasping system that uses superquadric shape fitting for intelligent object manipulation with Franka Emika robots.
-Based on Learning-Free Grasping of Unknown Objects Using Hidden Superquadrics Paper
+> **ROS 2 pipeline for grasping objects** using two interchangeable perception paths:  
+> (1) **Model-based** (ICP to known CAD/template) and (2) **Learning-free, model-free** (**hidden superquadrics**).   
+> Designed for **ZED** cameras and **Franka Emika Robot** arms.
 
-## Overview
+<p align="center">
+  <img alt="Pipeline diagram" src="resource/pipeline_overview.png" width="720">
+</p>
 
-This package implements a sophisticated grasping pipeline that:
-- Fits superquadric shapes to point cloud data
-- Generates optimal grasp poses based on object geometry
-- Provides robust manipulation capabilities for various object shapes
-- Integrates seamlessly with Franka Emika robotic arms
+[![ROS 2](https://img.shields.io/badge/ROS2-Humble%20%7C%20Iron-blue)](#prerequisites)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-orange)](#prerequisites)
+[![Camera](https://img.shields.io/badge/Camera-ZED%202i-9cf)](#hardware)
+[![Robot](https://img.shields.io/badge/Robot-Franka%20Panda-6aa84f)](#robot-integration)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+---
+
+## Table of Contents
+
+- [What’s inside](#whats-inside)
+- [How it works](#how-it-works)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [ROS interfaces](#ros-interfaces)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
+- [Citations](#citations)
+- [License & Contact](#license--contact)
+
+---
+
+## How it works
+
+1. **Detect & Segment**
+   - Get RGB/Depth with [ZED SDK](https://www.stereolabs.com/en-ch/developers/release).
+   - Run YOLO object segmentation (pre-trained models can be downloaded here (link), train your own model following this repo [YOLO-Finetune](https://github.com/MrGerencser/YOLO-Finetune)).
+
+2. **Fuse & Crop**
+   - Fuse workspace point clouds from one or more cameras.
+   - Crop out the per-object point cloud using the segmentation mask(s).
+
+3. **Estimate Pose / Grasp**
+   - **ICP path:** register object point cloud to a known model → object pose (and grasp pose if defined on the model). Usage example here.
+   - **Superquadric path:** fit hidden superquadrics to the object cloud → generate antipodal grasp candidates → rank. Usage example here.
+
+4. **Plan & Execute**
+   - Publish grasp target → execute (this repo includes a demo [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) that uses this [cartesian-impedance-controller]([https://github.com/MrGerencser/YOLO-Finetune](https://github.com/MrGerencser/cartesian_impedance_control)). 
+
+A minimal block diagram:
 
 ## Prerequisites
 
 - ROS2 (Humble/Iron recommended)
 - Ubuntu 20.04/22.04
-- Franka ROS2 packages
+- [Franka ROS2](https://github.com/frankarobotics/franka_ros2) packages 
+- [ZED SDK](https://www.stereolabs.com/en-ch/developers/release)
 
 ## Installation
 
@@ -138,18 +179,6 @@ ros2 launch superquadric_grasp_system grasp_system.launch.py debug:=true
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Citation
-
-If you use this work in your research, please cite:
-```
-@article{superquadric_grasp_2024,
-  title={Superquadric-Based Grasp Planning for Robotic Manipulation},
-  author={Your Name},
-  journal={Robotics Research},
-  year={2024}
-}
-```
 
 ## Contact
 

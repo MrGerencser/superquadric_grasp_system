@@ -56,7 +56,7 @@
    rosdep install --from-paths src --ignore-src -r -y
    ```
 
-3. **Build the workspace**
+3. **Build the package**
    ```bash
    colcon build --packages-select superquadric_grasp_system
    source install/setup.bash
@@ -64,92 +64,78 @@
 
 ## Quick Start
 
-1. Download Object models
-2. Download yolo models or train your own. Check out this repo for recording some pictures for [YOLO-Finetune](https://github.com/MrGerencser/YOLO-Finetune).
-3. Get correct camera transforms in config file. (Can be done by running this repo (camera calibration.
+### 1. Download Object Models
+- [Download link – TBD](https://www.google.ch)
 
-### Configuration
+### 2. Set Up YOLO Segmentation
+- Download pre-trained YOLOv11seg weights **or** train your own.
+- Use the [YOLO-Finetune repo](https://github.com/MrGerencser/YOLO-Finetune) for:
+  - Data collection
 
-Edit the configuration file at `config/grasp_params.yaml` to adjust:
-- Camera parameters
-- Superquadric fitting thresholds
-- Grasp generation settings
-- Robot-specific parameters
+### 3. Set Camera Transforms
+- Define camera transforms in:  
+  `config/transformations.yaml`
+- Use the [camera calibration tool](https://github.com/MrGerencser/camera_calibration) for gtting transformations.
 
-### Running the Demo
+### 4. Configure System Parameters
+Edit the main perception config file at:  
+`config/perception_config.yaml`
 
+Key settings to check:
+- **Camera settings:** serial numbers, resolution, transform file path
+- **YOLO model path** and class IDs/names
+- **Grasping method:** `"icp"` or `"superquadric"`
+- **Point cloud filtering**, voxel sizes, workspace bounds
+- **Visualization options**
+
+### 5. Rebuild the Package
+After changing any config files or models:
+```bash
+   cd ~/franka_ros2_ws
+   colcon build --packages-select superquadric_grasp_system
+   source install/setup.bash
+   ```
+
+### 6. Launch the Perception Node
 ```bash
 # Terminal 1: Launch the system
 ros2 run superquadric_grasp_system perception_node
 ```
 
-1. **Detect & Segment** – YOLOv11seg (pre-trained or bring-your-own weights)
-   - Get RGB/Depth with [ZED SDK](https://www.stereolabs.com/en-ch/developers/release).
-   - Run YOLO object segmentation (pre-trained models can be downloaded here (link), train your own model following this repo [YOLO-Finetune](https://github.com/MrGerencser/YOLO-Finetune)).
-
-2. **Fuse & Crop**
-   - Fuse workspace point clouds from one or more cameras.
-   - Crop out the per-object point cloud using the segmentation mask(s).
-
-3. **Estimate Pose / Grasp**
-   - **ICP path:** register object point cloud to a known model → object pose (and grasp pose if defined on the model). Usage example here.
-   - **Superquadric path:** fit hidden superquadrics to the object cloud → generate antipodal grasp candidates → rank. Usage example here.
-
-4. **Plan & Execute**
-   - Publish grasp target → execute (this repo includes a demo [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) that uses this [cartesian-impedance-controller]([https://github.com/MrGerencser/YOLO-Finetune](https://github.com/MrGerencser/cartesian_impedance_control)). 
-
-### Basic Launch
-
+### 7. Monitor Published Object Poses
 ```bash
-ros2 run superquadric_grasp_system perception_node
+# Terminal 2: Echo Poses
+ros2 topic echo /perception/object_pose
 ```
 
+## Examples
+ICP example
+SUperquadric example
 
+## Controlling the Robot
 
-# Terminal 2: Trigger grasp planning
-ros2 service call /plan_grasp superquadric_grasp_system/srv/PlanGrasp "{target_object: 'cup'}"
+Once the perception node is running and object poses or grasp poses are being published, you can use the included executor script to send commands to the robot.
+
+### Demo: Grasp Execution
+
+This repository includes a [grasp_executor.py](superqaudric_grasp_system/grasp_executor.py) demo script for grasp execution which works with this [Cartesian Impedance Controller](https://github.com/MrGerencser/cartesian_impedance_control).   
+In [grasp_executor.py](superqaudric_grasp_system/grasp_executor.py) you can specify wherevyou want to place the object by adjusting
+```bash
+'drop_box': {'x': 0.2, 'y': 0.6, 'z': 0.18}
 ```
 
-## Architecture
-
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Point Cloud   │───▶│  Shape Fitting   │───▶│ Grasp Planning  │
-│   Processing    │    │   (Superquadric) │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                                        │
-┌─────────────────┐    ┌──────────────────┐            ▼
-│   Execution     │◀───│   Motion         │    ┌─────────────────┐
-│                 │    │   Planning       │◀───│ Pose Selection  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+Launch Cartesian Impdedance Controller
+```bash
+# Terminal 3: Launch Cartesian Impdedance Control
+ros2 launch cartesian_impedance_control cartesian_impedance_controller.launch.py
 ```
 
-## Nodes
+Run Grasp Executor Node 
+```bash
+# Terminal 4: Run Grasp Executor Node
+superquadric_grasp_system/grasp_executor.py
+```
 
-- **`shape_fitter`**: Fits superquadric models to point clouds
-- **`grasp_planner`**: Generates grasp poses from fitted shapes
-- **`motion_executor`**: Executes planned motions on the robot
-
-## Topics
-
-- `/camera/depth/points` - Input point cloud
-- `/fitted_shapes` - Visualization of fitted superquadrics
-- `/grasp_poses` - Generated grasp candidates
-- `/robot_state` - Current robot configuration
-
-## Services
-
-- `/plan_grasp` - Trigger grasp planning for specified object
-- `/execute_grasp` - Execute the selected grasp
-- `/reset_system` - Reset the planning pipeline
-
-## Parameters
-
-Key parameters in `config/grasp_params.yaml`:
-- `fitting_tolerance`: Superquadric fitting accuracy (default: 0.01)
-- `min_points`: Minimum points required for fitting (default: 100)
-- `grasp_approach_distance`: Pre-grasp distance (default: 0.1m)
-- `gripper_width`: Maximum gripper opening (default: 0.08m)
 
 ## Troubleshooting
 
@@ -167,12 +153,6 @@ Key parameters in `config/grasp_params.yaml`:
    - Check robot safety limits
    - Verify collision detection settings
 
-### Debug Mode
-
-Run with debug visualization:
-```bash
-ros2 launch superquadric_grasp_system grasp_system.launch.py debug:=true
-```
 
 ## Contributing
 
@@ -188,4 +168,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Contact
 
-For questions and support, please open an issue or contact [your-email@domain.com].
+For questions and support, please open an issue or contact [gejan@ethz.ch].

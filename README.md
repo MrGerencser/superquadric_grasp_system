@@ -26,10 +26,9 @@
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Quick start](#quick-start)
-- [Configuration](#configuration)
-- [ROS interfaces](#ros-interfaces)
+- [Examples](#examples)
+- [Controlling The Robot](#controlling-the-robot)
 - [Troubleshooting](#troubleshooting)
-- [Roadmap](#roadmap)
 - [Citations](#citations)
 - [License & Contact](#license--contact)
 
@@ -41,6 +40,8 @@
 - Ubuntu 20.04/22.04
 - Franka ROS2 workspace with [Franka ROS2](https://github.com/frankarobotics/franka_ros2) packages 
 - [ZED SDK](https://www.stereolabs.com/en-ch/developers/release)
+
+---
 
 ## Installation
 
@@ -61,6 +62,8 @@
    colcon build --packages-select superquadric_grasp_system
    source install/setup.bash
    ```
+
+---
 
 ## Quick Start
 
@@ -108,11 +111,15 @@ ros2 run superquadric_grasp_system perception_node
 ros2 topic echo /perception/object_pose
 ```
 
-## Examples
-ICP example
-SUperquadric example
+---
 
-## Controlling the Robot
+## Examples
+ICP example   
+Superquadric example   
+
+---
+
+## Controlling The Robot
 
 Once the perception node is running and object poses or grasp poses are being published, you can use the included executor script to send commands to the robot.
 
@@ -136,6 +143,7 @@ Run Grasp Executor Node
 superquadric_grasp_system/grasp_executor.py
 ```
 
+---
 
 ## Troubleshooting
 
@@ -153,6 +161,7 @@ superquadric_grasp_system/grasp_executor.py
    - Check robot safety limits
    - Verify collision detection settings
 
+---
 
 ## Contributing
 
@@ -161,6 +170,8 @@ superquadric_grasp_system/grasp_executor.py
 3. Commit changes (`git commit -am 'Add new feature'`)
 4. Push to branch (`git push origin feature/new-feature`)
 5. Create a Pull Request
+
+---
 
 ## License
 

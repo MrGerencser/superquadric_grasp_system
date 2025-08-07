@@ -11,7 +11,7 @@ class ICPPoseEstimator:
     """ICP-based pose estimation utility class"""
     
     def __init__(self, model_folder_path: str, distance_threshold: float = 0.03, 
-                 visualize: bool = False, logger=None):
+                visualize: bool = False, logger=None, class_names: Optional[Dict[int, str]] = None):
         self.model_folder_path = model_folder_path
         self.distance_threshold = distance_threshold
         self.visualize = visualize
@@ -21,103 +21,166 @@ class ICPPoseEstimator:
         self.reference_models = {}
         self.processed_ref_points = {}
         
-        # Class name mapping
-        self.class_names = {
+        # Class name mapping - use provided mapping or fallback to defaults
+        self.class_names = class_names if class_names is not None else {
             0: "cone",
             1: "cup", 
-            2: "mallet",
-            3: "screw_driver",
-            4: "sunscreen"
+            2: "power drill",
         }
-        
-        # Load reference models
-        self._load_reference_models()
         
         # Grasp poses storage
         self.grasp_poses = {}
         
-        # Load reference models and grasp poses
-        self._load_reference_models()
-        self._load_grasp_poses()
+        # Initialize once - remove duplicate loading
+        self._initialize_models_and_grasps()
     
-    def _load_reference_models(self):
-        """Load reference models for each object class"""
+    def _initialize_models_and_grasps(self):
+        """Initialize reference models and grasp poses"""
+        if self.logger:
+            self.logger.info("Initializing ICP pose estimator...")
+            self.logger.debug(f"Class mapping: {self.class_names}")
+            self.logger.debug(f"Model folder: {self.model_folder_path}")
+        
+        # Load models and grasp poses
+        models_loaded, grasps_loaded = 0, 0
+        
+        for class_id, class_name in self.class_names.items():
+            # Load model
+            if self._load_single_model(class_id, class_name):
+                models_loaded += 1
+            
+            # Load grasp poses
+            if self._load_single_grasp_file(class_id, class_name):
+                grasps_loaded += 1
+        
+        # Summary logging
+        if self.logger:
+            self.logger.info(f"ICP Estimator ready: {models_loaded}/{len(self.class_names)} models, {grasps_loaded}/{len(self.class_names)} grasp files")
+            if models_loaded < len(self.class_names):
+                missing_models = [f"{self.class_names[cid]}" for cid in self.class_names.keys() if cid not in self.reference_models]
+                self.logger.warning(f"Missing models: {', '.join(missing_models)}")
+    
+    def _load_single_model(self, class_id: int, class_name: str) -> bool:
+        """Load a single reference model"""
         try:
-            for class_id, class_name in self.class_names.items():
-                model_path = os.path.join(self.model_folder_path, f"{class_name}.ply")
-                
-                if os.path.exists(model_path):
-                    if self.logger:
-                        self.logger.info(f"Loading reference model for class {class_id}: {model_path}")
-                    
-                    # Load reference model
-                    original_model = o3d.io.read_point_cloud(model_path)
-                    if not original_model.has_points():
-                        if self.logger:
-                            self.logger.error(f"No points in model: {model_path}")
-                        continue
-                    
-                    if self.logger:
-                        self.logger.info(f"Loaded model with {len(original_model.points)} points")
-                    
-                    # Scale model if needed (assuming models are in mm, convert to meters)
-                    scale_factor = 0.001
-                    scaled_points = np.asarray(original_model.points) * scale_factor
-                    
-                    reference_model = o3d.geometry.PointCloud()
-                    reference_model.points = o3d.utility.Vector3dVector(scaled_points)
-                    
-                    # Downsample
-                    voxel_size = 0.003
-                    reference_model = reference_model.voxel_down_sample(voxel_size=voxel_size)
-                    
-                    self.reference_models[class_id] = reference_model
-                    self.processed_ref_points[class_id] = np.asarray(reference_model.points).copy()
-                    
-                    if self.logger:
-                        self.logger.info(f"Preprocessed model for class {class_id} with {len(reference_model.points)} points")
-                else:
-                    if self.logger:
-                        self.logger.warning(f"Reference model not found: {model_path}")
-                    
+            # Try multiple paths
+            model_paths = [
+                os.path.join(self.model_folder_path, f"{class_name}.ply"),
+                os.path.join(self.model_folder_path, class_name.replace(' ', '_'), f"{class_name.replace(' ', '_')}.ply"),
+                os.path.join(self.model_folder_path, class_name.replace(' ', '_').lower(), f"{class_name.replace(' ', '_').lower()}.ply"),
+            ]
+            
+            model_path = None
+            for path in model_paths:
+                if os.path.exists(path):
+                    model_path = path
+                    break
+            
+            if not model_path:
+                if self.logger:
+                    self.logger.warning(f"Model not found for {class_name} (class {class_id})")
+                    self.logger.debug(f"Searched: {model_paths}")
+                return False
+            
+            # Load and process model
+            reference_model = o3d.io.read_point_cloud(model_path)
+            if not reference_model.has_points():
+                if self.logger:
+                    self.logger.error(f"Empty model file: {model_path}")
+                return False
+            
+            original_points = len(reference_model.points)
+            
+            # Scale conversion (mm to m)
+            reference_model.scale(0.001, center=(0, 0, 0))
+            
+            # Downsample
+            reference_model = reference_model.voxel_down_sample(voxel_size=0.003)
+            final_points = len(reference_model.points)
+            
+            # Store processed model
+            self.reference_models[class_id] = reference_model
+            self.processed_ref_points[class_id] = np.asarray(reference_model.points).copy()
+            
+            if self.logger:
+                self.logger.info(f"{class_name}: {original_points} -> {final_points} points (scaled mm->m)")
+                self.logger.debug(f"File: {os.path.basename(model_path)}")
+            
+            return True
+            
         except Exception as e:
             if self.logger:
-                self.logger.error(f"Failed to load reference models: {e}")
-                
-    def _load_grasp_poses(self):
-        """Load pre-defined grasp poses for each object class"""
+                self.logger.error(f"Failed to load model for {class_name}: {e}")
+            return False
+    
+    def _load_single_grasp_file(self, class_id: int, class_name: str) -> bool:
+        """Load grasp poses for a single class"""
         try:
-            for class_id, class_name in self.class_names.items():
-                grasp_file_path = os.path.join(self.model_folder_path, f"{class_name}_grasps.yaml")
-                
-                if os.path.exists(grasp_file_path):
-                    with open(grasp_file_path, 'r') as file:
-                        grasp_data = yaml.safe_load(file)
-                        self.grasp_poses[class_id] = grasp_data.get('grasps', [])
-                        
-                    if self.logger:
-                        self.logger.info(f"Loaded {len(self.grasp_poses[class_id])} grasp poses for class {class_id}")
-                else:
-                    self.grasp_poses[class_id] = []
-                    if self.logger:
-                        self.logger.warning(f"No grasp poses file found: {grasp_file_path}")
-                        
+            # Try multiple grasp file paths
+            grasp_file_paths = [
+                os.path.join(self.model_folder_path, f"{class_name}_grasps.yaml"),
+                os.path.join(self.model_folder_path, class_name.replace(' ', '_'), f"{class_name.replace(' ', '_')}_grasps.yaml"),
+                os.path.join(self.model_folder_path, class_name.replace(' ', '_').lower(), f"{class_name.replace(' ', '_').lower()}_grasps.yaml"),
+            ]
+            
+            grasp_file_path = None
+            for path in grasp_file_paths:
+                if os.path.exists(path):
+                    grasp_file_path = path
+                    break
+            
+            if not grasp_file_path:
+                self.grasp_poses[class_id] = []
+                if self.logger:
+                    self.logger.debug(f"{class_name}: No grasp file found (will use default)")
+                return False
+            
+            # Load grasp poses
+            with open(grasp_file_path, 'r') as file:
+                grasp_data = yaml.safe_load(file)
+                self.grasp_poses[class_id] = grasp_data.get('grasps', [])
+            
+            grasp_count = len(self.grasp_poses[class_id])
+            if self.logger:
+                self.logger.info(f"{class_name}: {grasp_count} grasp poses loaded")
+                self.logger.debug(f"File: {os.path.basename(grasp_file_path)}")
+            
+            return True
+            
         except Exception as e:
             if self.logger:
-                self.logger.error(f"Failed to load grasp poses: {e}")
-                
+                self.logger.error(f"Failed to load grasps for {class_name}: {e}")
+            self.grasp_poses[class_id] = []
+            return False
+    
     def get_transformed_grasp_poses(self, transformation_matrix: np.ndarray, class_id: int, max_grasps: int = 3):
         """Transform pre-defined grasp poses using ICP result"""
+        class_name = self.class_names.get(class_id, f'class_{class_id}')
+        
+        if self.logger:
+            self.logger.debug(f"Transforming grasp poses for {class_name}")
+        
         if class_id not in self.grasp_poses or not self.grasp_poses[class_id]:
-            return []
+            if self.logger:
+                self.logger.info(f"No predefined grasps for {class_name}, generating default grasp")
+            
+            # Generate a simple default grasp at the object center
+            default_grasp = {
+                'name': 'default_top_grasp',
+                'pose': transformation_matrix.copy(),
+                'position': transformation_matrix[:3, 3].tolist(),
+                'orientation': [0.0, 0.0, 0.0]  # No additional rotation
+            }
+            return [default_grasp]
         
         transformed_grasps = []
+        available_grasps = len(self.grasp_poses[class_id])
         
-        for grasp in self.grasp_poses[class_id]:
+        for i, grasp in enumerate(self.grasp_poses[class_id][:max_grasps]):
             try:
                 # Extract grasp pose relative to object
                 rel_position = np.array(grasp['position'])
-                rel_orientation = np.array(grasp['orientation'])  # euler angles
+                rel_orientation = np.array(grasp['orientation'])
                 
                 # Create relative transformation matrix
                 rel_rotation = R_simple.from_euler('xyz', rel_orientation).as_matrix()
@@ -125,7 +188,7 @@ class ICPPoseEstimator:
                 rel_transform[:3, :3] = rel_rotation
                 rel_transform[:3, 3] = rel_position
                 
-                # Transform to world coordinates using ICP result
+                # Transform to world coordinates
                 world_transform = transformation_matrix @ rel_transform
                 
                 transformed_grasps.append({
@@ -137,14 +200,22 @@ class ICPPoseEstimator:
                 
             except Exception as e:
                 if self.logger:
-                    self.logger.warning(f"Failed to transform grasp {grasp.get('name', 'unknown')}: {e}")
+                    self.logger.warning(f"Failed to transform grasp {grasp.get('name', f'#{i+1}')}: {e}")
                 continue
-                    
-        return transformed_grasps[:max_grasps]
+        
+        if self.logger:
+            self.logger.info(f"Generated {len(transformed_grasps)}/{available_grasps} grasp poses for {class_name}")
+        
+        return transformed_grasps
     
     def estimate_pose(self, observed_data: Union[o3d.geometry.PointCloud, np.ndarray], 
-                 class_id: int, full_cloud: Optional[Union[o3d.geometry.PointCloud, np.ndarray]] = None) -> Optional[np.ndarray]:
+                     class_id: int, full_cloud: Optional[Union[o3d.geometry.PointCloud, np.ndarray]] = None) -> Optional[np.ndarray]:
         """Estimate pose using ICP alignment"""
+        class_name = self.class_names.get(class_id, f'class_{class_id}')
+        
+        if self.logger:
+            self.logger.debug(f"Starting ICP pose estimation for {class_name}")
+        
         try:
             # Convert input to Open3D point cloud if it's a numpy array
             if isinstance(observed_data, np.ndarray):
@@ -166,9 +237,9 @@ class ICPPoseEstimator:
             # Get reference model for this class
             if class_id not in self.reference_models:
                 if self.logger:
-                    self.logger.error(f"No reference model for class {class_id}")
+                    self.logger.error(f"No reference model for {class_name}")
                 return None
-                
+            
             reference_points = self.processed_ref_points[class_id].copy()
             reference_copy = o3d.geometry.PointCloud()
             reference_copy.points = o3d.utility.Vector3dVector(reference_points)
@@ -315,9 +386,11 @@ class ICPPoseEstimator:
                     self.logger.warning(f"ICP failed for class {class_id}")
                 return None
             
+            # Success logging with status indicators
             if self.logger:
-                self.logger.info(f"Class {class_id} - Best config: {best_result['config']}, "
-                            f"Fitness: {best_result['fitness']:.3f}, RMSE: {best_result['rmse']:.5f}")
+                fitness_status = "GOOD" if best_result['fitness'] > 0.7 else "OK" if best_result['fitness'] > 0.4 else "POOR"
+                self.logger.info(f"{class_name}: {fitness_status} - Fitness={best_result['fitness']:.3f}, RMSE={best_result['rmse']:.4f}")
+                self.logger.debug(f"Config: {best_result['config']}")
             
             # Visualization if enabled
             if self.visualize:
@@ -327,7 +400,7 @@ class ICPPoseEstimator:
             
         except Exception as e:
             if self.logger:
-                self.logger.error(f"ICP estimation failed for class {class_id}: {e}")
+                self.logger.error(f"ICP estimation failed for {class_name}: {e}")
             return None
     
     def _get_pca_basis(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:

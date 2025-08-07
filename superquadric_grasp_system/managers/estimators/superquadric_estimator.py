@@ -1,54 +1,78 @@
 # superquadric_grasp_system/managers/estimators/superquadric_estimator.py 
-from .base_estimator import BaseEstimator
 from ...utils.superquadric_utils import fit_single_superquadric, fit_multiple_superquadrics
 from ...utils.superquadric_grasp_planning.superquadric_grasp_planner import SuperquadricGraspPlanner
+from ...utils.point_cloud_utils import PointCloudProcessor
+from ...utils.ros_publisher import ROSPublisher
+from ...visualization.main_visualizer import PerceptionVisualizer
+
 from scipy.spatial.transform import Rotation as R_simple
 import numpy as np
+from typing import Dict
 
-class SuperquadricEstimator(BaseEstimator):
-    """Superquadric-specific pose estimation implementation"""
-    
-    def __init__(self, node, superquadric_config: dict, shared_config: dict):
-        # Visualization flags - Match the config file keys exactly
-        self.enable_fit_visualization = superquadric_config.get('enable_superquadric_fit_visualization', False)
-        self.enable_all_grasps_visualization = superquadric_config.get('enable_all_valid_grasps_visualization', False)
-        self.enable_best_grasp_visualization = superquadric_config.get('enable_best_grasps_visualization', False)
-        self.enable_support_test_visualization = superquadric_config.get('enable_support_test_visualization', False)
-        self.enable_collision_test_visualization = superquadric_config.get('enable_collision_test_visualization', False)
 
-        super().__init__(node, superquadric_config, shared_config)
+class SuperquadricEstimator:
+    def __init__(self, node, outlier_ratio: float, use_kmeans_clustering: bool,
+                gripper_jaw_length: float, gripper_max_opening: float,
+                class_names: Dict[int, str], poisson_reconstruction: bool,
+                outlier_removal: bool, voxel_downsample_size: float,
+                enable_superquadric_fit_visualization: bool = False,
+                enable_all_valid_grasps_visualization: bool = False,
+                enable_best_grasps_visualization: bool = False,
+                enable_support_test_visualization: bool = False,
+                enable_collision_test_visualization: bool = False,
+                grasp_planning_enabled: bool = True):
+        self.node = node
+        self.logger = node.get_logger()
         
-        # Superquadric-specific configuration
-        self.enabled = superquadric_config.get('enabled', True)
-        self.outlier_ratio = superquadric_config.get('outlier_ratio', 0.9)
-        self.use_kmeans_clustering = superquadric_config.get('use_kmeans_clustering', False)
-        self.grasp_planning_enabled = superquadric_config.get('grasp_planning_enabled', True)
+        # Direct assignment - no config lookup needed
+        self.outlier_ratio = outlier_ratio
+        self.use_kmeans_clustering = use_kmeans_clustering
+        self.gripper_jaw_length = gripper_jaw_length
+        self.gripper_max_opening = gripper_max_opening
+        self.class_names = class_names
+        self.enable_superquadric_fit_visualization = enable_superquadric_fit_visualization
+
+        # Visualization flags
+        self.enable_all_valid_grasps_visualization = enable_all_valid_grasps_visualization
+        self.enable_best_grasps_visualization = enable_best_grasps_visualization
+        self.enable_support_test_visualization = enable_support_test_visualization
+        self.enable_collision_test_visualization = enable_collision_test_visualization
         
-        # Class names for visualization
-        self.class_names = {0: 'Cone', 1: 'Cup', 2: 'Mallet', 3: 'Screw Driver', 4: 'Sunscreen'}
+        # Grasp planning flag
+        self.grasp_planning_enabled = grasp_planning_enabled
         
-        # Debug logging to verify configuration
-        self.logger.debug(f"SuperquadricEstimator config keys: {list(superquadric_config.keys())}")
-        self.logger.debug(f"Fit visualization enabled: {self.enable_fit_visualization}")
-        self.logger.debug(f"All grasps visualization enabled: {self.enable_all_grasps_visualization}")
-        self.logger.debug(f"Best grasp visualization enabled: {self.enable_best_grasp_visualization}")
+        # Initialize visualizer if needed
+        self.visualizer = None
+        if self._needs_visualization():
+            try:
+                self.visualizer = PerceptionVisualizer()
+            except ImportError as e:
+                self.logger.warning(f"Could not import visualizer: {e}")
+                self.visualizer = None
         
-        # Initialize grasp planner directly (instead of through manager)
-        if self.enabled and self.grasp_planning_enabled:
-            # Extract gripper parameters from config
-            self.gripper_jaw_len = superquadric_config.get('gripper_jaw_length', 0.041)
-            self.gripper_max_open = superquadric_config.get('gripper_max_opening', 0.08)
-            
-            # Create planner directly
-            self.grasp_planner = SuperquadricGraspPlanner(
-                jaw_len=self.gripper_jaw_len, 
-                max_open=self.gripper_max_open
-            )
-            
-            self.logger.info(f"Initialized grasp planner with jaw_len={self.gripper_jaw_len}, max_open={self.gripper_max_open}")
-            self.logger.info(f"Debug visualization - Support: {self.enable_support_test_visualization}, Collision: {self.enable_collision_test_visualization}")
-        else:
-            self.grasp_planner = None
+        # Create point cloud processor with explicit config
+        self.point_cloud_processor = PointCloudProcessor(
+            poisson_reconstruction=poisson_reconstruction,
+            outlier_removal=outlier_removal,
+            voxel_downsample_size=voxel_downsample_size
+        )
+        
+        # Create ROS publisher with explicit config
+        self.ros_publisher = ROSPublisher(
+            node,
+            {
+                'class_names': class_names,
+                'publish_poses': True,
+                'publish_transforms': True,
+                'target_frame': 'panda_link0'
+            }
+        )
+        
+        # Initialize grasp planner
+        self.grasp_planner = SuperquadricGraspPlanner(
+            jaw_len=self.gripper_jaw_length,
+            max_open=self.gripper_max_opening
+        )
     
     def initialize(self) -> bool:
         """Initialize superquadric estimator"""
@@ -76,14 +100,14 @@ class SuperquadricEstimator(BaseEstimator):
             return None
         
         # Visualize superquadric fit if enabled
-        if self.enable_fit_visualization and self.visualizer:
+        if self.enable_superquadric_fit_visualization and self.visualizer:
             self.visualizer.visualize_superquadric_fit(processed_points, all_sqs, class_id)
         
         # Generate grasp poses using integrated planner
-        all_grasp_poses, best_grasp_pose = self._generate_grasp_poses(processed_points, all_sqs, class_id)
+        all_grasp_poses, best_grasp_pose, best_sq_index = self._generate_grasp_poses(processed_points, all_sqs, class_id)
         
         # Visualize grasps if enabled
-        self._visualize_grasps(processed_points, all_sqs, all_grasp_poses, best_grasp_pose, class_id)
+        self._visualize_grasps(processed_points, all_sqs, all_grasp_poses, best_grasp_pose, class_id, best_sq_index)
         
         # Publish best grasp pose
         if best_grasp_pose is not None:
@@ -109,7 +133,7 @@ class SuperquadricEstimator(BaseEstimator):
     def _generate_grasp_poses(self, processed_points, all_sqs, class_id):
         """Generate grasp poses using integrated grasp planner directly"""
         if not self.grasp_planner or not all_sqs:
-            return [], None
+            return [], None, None
             
         try:
             # Save point cloud to temporary file for grasp planning
@@ -125,15 +149,15 @@ class SuperquadricEstimator(BaseEstimator):
             o3d.io.write_point_cloud(temp_path, pcd)
             
             all_grasp_poses = []
-            all_grasp_data = []  # Store all grasp data for best selection
+            all_grasp_data = []
             
             # Generate grasps for each superquadric
-            for sq in all_sqs:
+            for sq_ind, sq in enumerate(all_sqs):
                 try:
                     sq_params = self._extract_sq_params(sq)
                     
-                    # Plan grasps directly using SuperquadricGraspPlanner
-                    grasps_data = self.grasp_planner.plan_grasps(
+                    # Use plan_filtered_grasps which includes proper filtering
+                    filtered_grasps_data = self.grasp_planner.plan_filtered_grasps(
                         point_cloud_path=temp_path,
                         shape=sq_params['shape'],
                         scale=sq_params['scale'],
@@ -144,104 +168,107 @@ class SuperquadricEstimator(BaseEstimator):
                         visualize_collision_test=self.enable_collision_test_visualization
                     )
                     
-                    # Collect all grasp data for combined selection
-                    if grasps_data:
-                        all_grasp_data.extend(grasps_data)
+                    # Only use the filtered results from plan_filtered_grasps
+                    if filtered_grasps_data:
+                        for grasp_data in filtered_grasps_data:
+                            grasp_data['sq_index'] = sq_ind  # Track which SQ this came from
+
+                        all_grasp_data.extend(filtered_grasps_data)
+
                         # Extract poses for visualization
-                        for grasp_data in grasps_data:
+                        for grasp_data in filtered_grasps_data:
                             if isinstance(grasp_data, dict) and 'pose' in grasp_data:
                                 all_grasp_poses.append(grasp_data['pose'])
-                            
+                                
                 except Exception as sq_error:
                     self.logger.warning(f"Failed to generate grasps for superquadric: {sq_error}")
                     continue
             
-            # Now select the best grasp from all collected grasps using the proper criteria
+            # Select best grasp from the FILTERED results only
             best_grasp_pose = None
+            best_sq_index = None
             if all_grasp_data:
                 try:
-                    # Calculate object center from all superquadrics
-                    object_center = None
-                    if all_sqs:
-                        centers = []
-                        for sq in all_sqs:
-                            if hasattr(sq, 'translation'):
-                                centers.append(sq.translation)
-                            elif isinstance(sq, dict) and 'translation' in sq:
-                                centers.append(sq['translation'])
-                        if centers:
-                            object_center = np.mean(centers, axis=0)
-                    
-                    # Use the planner's best selection method directly
+                    # Use the sophisticated selection criteria instead of simple max score
                     best_grasp_data = self.grasp_planner.select_best_grasp_with_criteria(
-                        all_grasp_data, 
-                        object_center=object_center,
+                        grasp_data_list=all_grasp_data,
                         point_cloud=processed_points
                     )
                     
                     if best_grasp_data and isinstance(best_grasp_data, dict) and 'pose' in best_grasp_data:
                         best_grasp_pose = best_grasp_data['pose']
-                        self.logger.info(f"Selected best grasp with score: {best_grasp_data.get('score', 'N/A')}")
-                    
-                except Exception as selection_error:
-                    self.logger.warning(f"Best grasp selection failed, using fallback: {selection_error}")
-                    # Fallback: use first grasp if available
-                    if all_grasp_data:
-                        first_grasp = all_grasp_data[0]
-                        if isinstance(first_grasp, dict) and 'pose' in first_grasp:
-                            best_grasp_pose = first_grasp['pose']
+                        best_sq_index = best_grasp_data.get('sq_index', 0)  # Get the SQ index
+                        self.logger.info(f"Selected best grasp from SQ {best_sq_index + 1} with score: {best_grasp_data.get('score', 'N/A')}")
             
+                except Exception as selection_error:
+                    self.logger.warning(f"Sophisticated grasp selection failed: {selection_error}")
+                    # Fallback to simple selection
+                    best_grasp_data = max(all_grasp_data, key=lambda x: x.get('score', 0.0))
+                    if best_grasp_data and 'pose' in best_grasp_data:
+                        best_grasp_pose = best_grasp_data['pose']
+                        best_sq_index = best_grasp_data.get('sq_index', 0)  # Get the SQ index
+
             # Clean up temporary file
             try:
                 import os
                 os.unlink(temp_path)
             except:
                 pass
-                
-            return all_grasp_poses, best_grasp_pose
-            
+
+            return all_grasp_poses, best_grasp_pose, best_sq_index
+
         except Exception as e:
             self.logger.error(f"Grasp pose generation failed: {e}")
-            return [], None
-    
-    def _visualize_grasps(self, processed_points, all_sqs, all_grasp_poses, best_grasp_pose, class_id):
+            return [], None, None
+
+    def _visualize_grasps(self, processed_points, all_sqs, all_grasp_poses, best_grasp_pose, class_id, best_sq_index=None):
         """Handle all superquadric grasp visualizations"""
         if not self.visualizer:
             return
             
         try:
-            # Convert superquadric objects to visualization format
-            superquadric_params = []
+            # Convert ALL superquadric objects to visualization format (for all grasps view)
+            all_superquadric_params = []
             for sq in all_sqs:
                 sq_params = self._extract_sq_params(sq)
-                superquadric_params.append(sq_params)
+                all_superquadric_params.append(sq_params)
             
-            # All valid grasps visualization
-            if self.enable_all_grasps_visualization and all_grasp_poses:
+            # All valid grasps visualization (show all superquadrics)
+            if self.enable_all_valid_grasps_visualization and all_grasp_poses:
                 try:
                     self.visualizer.visualize_grasps(
                         point_cloud_data=processed_points,
-                        superquadric_params=superquadric_params,
+                        superquadric_params=all_superquadric_params,  # All SQs
                         grasp_poses=all_grasp_poses,
-                        gripper_colors=[(1, 0, 0)] * len(all_grasp_poses),  # Red color for all grasps
+                        gripper_colors=[(1, 0, 0)] * len(all_grasp_poses),
                         show_sweep_volume=False,
                         window_name=f"All Grasps: {self.class_names.get(class_id, f'Object_{class_id}')}"
                     )
                 except Exception as viz_error:
                     self.logger.error(f"All valid grasp visualization failed: {viz_error}")
             
-            # Best grasp visualization
-            if self.enable_best_grasp_visualization and best_grasp_pose is not None:
+            # Best grasp visualization (show ONLY the best SQ)
+            if self.enable_best_grasps_visualization and best_grasp_pose is not None:
                 try:
+                    # Get only the superquadric associated with the best grasp
+                    if best_sq_index is not None and 0 <= best_sq_index < len(all_sqs):
+                        best_sq = all_sqs[best_sq_index]
+                        best_superquadric_params = [self._extract_sq_params(best_sq)]
+                        sq_info = f"SQ {best_sq_index + 1}"
+                    else:
+                        # Fallback: use all superquadrics
+                        best_superquadric_params = all_superquadric_params
+                        sq_info = "All SQs"
+                    
                     self.visualizer.visualize_grasps(
                         point_cloud_data=processed_points,
-                        superquadric_params=superquadric_params,
-                        grasp_poses=[best_grasp_pose],  # Only the best grasp
-                        gripper_colors=[(0, 1, 0)],  # Green color for best grasp
+                        superquadric_params=best_superquadric_params,  # Only best SQ
+                        grasp_poses=[best_grasp_pose],
+                        gripper_colors=[(0, 1, 0)],
                         show_sweep_volume=True,
-                        window_name=f"Best Grasp: {self.class_names.get(class_id, f'Object_{class_id}')}"
+                        window_name=f"Best Grasp ({sq_info}): {self.class_names.get(class_id, f'Object_{class_id}')}"
                     )
-                    self.logger.info(f"Best grasp visualization completed")
+                    self.logger.info(f"Best grasp visualization completed for {sq_info}")
                 except Exception as viz_error:
                     self.logger.error(f"Best grasp visualization failed: {viz_error}")
                     
@@ -250,24 +277,27 @@ class SuperquadricEstimator(BaseEstimator):
     
     def _needs_visualization(self) -> bool:
         return any([
-            self.enable_fit_visualization,
-            self.enable_all_grasps_visualization,
-            self.enable_best_grasp_visualization,
-            self.shared_config.get('visualize_fused_point_clouds', False),
-            self.shared_config.get('enable_detected_object_clouds_visualization', False)
+            self.enable_superquadric_fit_visualization,
+            self.enable_all_valid_grasps_visualization, 
+            self.enable_best_grasps_visualization,
+            self.enable_support_test_visualization,
+            self.enable_collision_test_visualization,
         ])
         
     def is_ready(self) -> bool:
         """Check if superquadric estimator is ready"""
-        if not self.enabled:
+        if not self.grasp_planning_enabled:
+            self.logger.warning("Grasp planning is disabled, skipping readiness check for planner.")
             return False
         
         # Check if ROS publisher is ready
         if not self.ros_publisher or not hasattr(self.ros_publisher, 'pose_publisher'):
+            self.logger.error("ROS publisher is not initialized or missing pose publisher.")
             return False
         
         # Check if grasp planner is ready (if grasp planning is enabled)
         if self.grasp_planning_enabled and not self.grasp_planner:
+            self.logger.error("Grasp planner is not initialized.")
             return False
         
         return True

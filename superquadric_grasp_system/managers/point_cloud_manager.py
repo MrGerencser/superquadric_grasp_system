@@ -5,31 +5,42 @@ from typing import Tuple, List, Optional
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Header
 import sensor_msgs_py.point_cloud2 as pc2
-from .base_manager import BaseManager
+
 from .camera_manager import CameraManager
 from ..utils.point_cloud_utils import PointCloudProcessor
 
-class PointCloudManager(BaseManager):
+class PointCloudManager:
     """Manages point cloud processing and fusion"""
     
-    def __init__(self, node, config):
-        super().__init__(node, config)
-        self.device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
-        self.voxel_size = config.get('voxel_size', 0.003)
-        self.workspace_bounds = config.get('workspace_bounds', [-0.25, 0.75, -0.5, 0.5, -0.05, 2.0])
-        self.distance_threshold = config.get('distance_threshold', 0.3)
-        self.require_both_cameras = config.get('require_both_cameras', True)
+    def __init__(self, node, device: str, voxel_size: float,
+                 workspace_bounds: list, distance_threshold: float,
+                 require_both_cameras: bool, publish_enabled: bool,
+                 poisson_reconstruction: bool = False, outlier_removal: bool = True,
+                 voxel_downsample_size: float = 0.002, visualize_fused_workspace: bool = False):
+        self.node = node
+        self.logger = node.get_logger()
         
-        # Publishing settings
-        self.publish_point_clouds = config.get('publish_point_clouds', True)
-        shared_config = config.get('shared', {})
-        self.point_cloud_processor = PointCloudProcessor(shared_config)
+        # Configuration
+        self.device = device
+        self.voxel_size = voxel_size
+        self.workspace_bounds = workspace_bounds
+        self.distance_threshold = distance_threshold
+        self.require_both_cameras = require_both_cameras
+        self.publish_point_clouds = publish_enabled
+        self.visualize_fused_workspace = visualize_fused_workspace
+        
+        # Create point cloud processor
+        self.point_cloud_processor = PointCloudProcessor(
+            poisson_reconstruction=poisson_reconstruction,
+            outlier_removal=outlier_removal,
+            voxel_downsample_size=voxel_downsample_size
+        )
         
         # ROS publishers (will be initialized in initialize())
         self.fused_workspace_publisher = None
         self.fused_objects_publisher = None
         self.subtracted_cloud_publisher = None
-        self.visualize_fused_workspace = config.get('visualize_fused_workspace', False)
+        self.is_initialized = False
 
     def initialize(self) -> bool:
         """Initialize point cloud manager and ROS publishers"""
@@ -155,7 +166,7 @@ class PointCloudManager(BaseManager):
 
                         if mask_indices.numel() > 0: 
                             with torch.amp.autocast('cuda'):
-                                points_3d = self.convert_mask_to_3d_points(
+                                points_3d = self.point_cloud_processor.convert_mask_to_3d_points(
                                     mask_indices, depth_map1_torch, 
                                     cx1, cy1, fx1, fy1
                                 )

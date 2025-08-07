@@ -73,7 +73,7 @@ perception:
       convergence_threshold: 1e-6
       
       ## Grasp planning for ICP
-      grasp_planning_enabled: true
+      grasp_planning_enabled: false
       max_grasp_candidates: 100
       
       # ICP-specific visualization

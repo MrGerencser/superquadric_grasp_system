@@ -1,52 +1,62 @@
 import numpy as np
 import torch
 from ultralytics import YOLO
-from typing import List, Tuple, Optional, Any
-from .base_manager import BaseManager
+from typing import List, Tuple, Optional, Any, Dict
 
-class DetectionManager(BaseManager):
+class DetectionManager:
     """Manages YOLO detection and segmentation"""
-    
-    def __init__(self, node, config):
-        super().__init__(node, config)
-        self.model = None
-        self.device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
-        self.model_path = config.get('yolo_model_path')
-        self.confidence_threshold = config.get('confidence_threshold', 0.1)
-        self.classes = config.get('classes', [0, 1, 2, 3, 4])
-        self.class_names = config.get('class_names', {
-            0: 'Cone', 1: 'Cup', 2: 'Mallet', 3: 'Screw Driver', 4: 'Sunscreen'
-        })
+    def __init__(self, node, model_path: str, confidence_threshold: float,
+                 classes: List[int], class_names: Dict[int, str],
+                 device: str = "cpu", web_enabled: bool = False, 
+                 web_port: int = 8080, web_dir: str = "/tmp/grasp_system_live"):
+        self.node = node
+        self.logger = node.get_logger()
         
-        # Visualization settings
-        self.enable_web_visualization = config.get('enable_web_visualization', False)
-        self.enable_detection_visualization = config.get('enable_detection_visualization', True)
+        # Direct property assignment
+        self.device = device
+        self.model_path = model_path
+        self.confidence_threshold = confidence_threshold
+        self.classes = classes
+        self.class_names = class_names
+        
+        # Initialize as not ready
+        self.model = None
+        self.is_initialized = False
+
+        # Web visualization
+        self.enable_web_visualization = web_enabled
+        self.web_port = web_port
+        self.web_dir = web_dir
         
         # Web visualization components
         self.web_interface = None
         self.detection_visualizer = None
         
         if self.enable_web_visualization:
-            self._setup_web_visualization(config)
+            self._setup_web_visualization()
 
-    def _setup_web_visualization(self, config):
+    def _setup_web_visualization(self):
         """Setup web visualization components"""
         try:
             from ..visualization.web_interface import WebInterface
             from ..visualization.detection_visualizer import DetectionVisualizer
             
             self.detection_visualizer = DetectionVisualizer(self.class_names)
-            
-            web_config = {
-                'web_dir': config.get('web_dir', '/tmp/grasp_system_live'),
-                'port': config.get('web_port', 8080)
+
+            # Use correct config structure
+            web_interface_config = {
+                'web_dir': self.web_dir,
+                'port': self.web_port
             }
-            self.web_interface = WebInterface(**web_config)
+            self.web_interface = WebInterface(**web_interface_config)
             
             self.logger.info("Web visualization components initialized")
             
         except ImportError as e:
             self.logger.warning(f"Could not import web visualization: {e}")
+            self.enable_web_visualization = False
+        except Exception as e:
+            self.logger.error(f"Error setting up web visualization: {e}")
             self.enable_web_visualization = False
 
     def initialize(self) -> bool:
@@ -141,6 +151,7 @@ class DetectionManager(BaseManager):
         """Update web visualization with detection results"""
         try:
             if not self.enable_web_visualization or not self.web_interface or not self.detection_visualizer:
+                self.logger.warning("Web visualization is not enabled or components are missing")
                 return
                 
             frame1 = frames_dict.get('camera1')

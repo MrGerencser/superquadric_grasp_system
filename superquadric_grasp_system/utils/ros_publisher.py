@@ -17,6 +17,9 @@ class ROSPublisher:
         self.publish_transforms = config.get('publish_transforms', True)
         self.target_frame = config.get('target_frame', 'panda_link0')
         
+        # Class names for object identification
+        self.class_names = config.get('class_names', {})
+
         self.pose_publisher = None
         self.tf_broadcaster = None
     
@@ -52,10 +55,15 @@ class ROSPublisher:
             self.logger.error(f"Failed to publish pose: {e}")
     
     def _matrix_to_pose_stamped(self, transformation_matrix: np.ndarray, 
-                               class_id: int, object_id: int) -> PoseStamped:
+                            class_id: int, object_id: int) -> PoseStamped:
         """Convert transformation matrix to PoseStamped message"""
         pose_msg = PoseStamped()
-        pose_msg.header.frame_id = self.target_frame
+        
+        # Get class name from detection config
+        class_name = self._get_class_name(class_id)
+        
+        # Encode object info in frame_id
+        pose_msg.header.frame_id = f"{self.target_frame}_{class_name}_id{object_id}"
         pose_msg.header.stamp = self.node.get_clock().now().to_msg()
         
         # Extract position
@@ -74,6 +82,20 @@ class ROSPublisher:
         pose_msg.pose.orientation.w = float(quat[3])
         
         return pose_msg
+
+    def _get_class_name(self, class_id: int) -> str:
+        """Get class name from class_id"""
+        # Use self.class_names directly, with fallback dictionary if empty
+        if self.class_names:
+            return self.class_names.get(class_id, f"unknown_{class_id}")
+        
+        # Fallback dictionary if class_names wasn't provided
+        fallback_names = {
+            0: "allergenfreejarrodophilus",
+        }
+        
+        
+        return fallback_names.get(class_id, f"unknown_{class_id}")
     
     def _create_transform_stamped(self, transformation_matrix: np.ndarray, 
                                  class_id: int, object_id: int) -> TransformStamped:

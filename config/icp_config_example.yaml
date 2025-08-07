@@ -6,7 +6,7 @@ perception:
   
   # Web visualization parameters
   web_interface:
-    enabled: false
+    enabled: true
     port: 8080
     web_dir: "/tmp/grasp_system_live"
     update_rate: 15.0  # FPS for web updates
@@ -22,21 +22,13 @@ perception:
   # Detection parameters
   detection:
     method: "yolo"  # yolo
-    yolo_model_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/cubes.pt"
-    confidence_threshold: 0.5
-    classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    yolo_model_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/red_objects.pt"
+    confidence_threshold: 0.1
+    classes: [0, 1, 2]
     class_names:
-      0: "allergenfreejarrodophilus"
-      1: "banana" 
-      2: "bleach_cleanser"
-      3: "cup"
-      4: "master_chef_can"
-      5: "milk_tetrapak"
-      6: "mustard_bottle"
-      7: "power_drill"
-      8: "sugar_box"
-      9: "tennisball"
-
+      0: "bleach cleanser"
+      1: "cup" 
+      2: "power drill"
   
   # Point cloud parameters
   point_cloud:
@@ -58,8 +50,8 @@ perception:
       voxel_downsample_size: 0.002
       
       # Shared visualization (works for both ICP and superquadric)
-      visualize_fused_workspace: false
-      enable_detected_object_clouds_visualization: false
+      visualize_fused_workspace: true
+      enable_detected_object_clouds_visualization: true
     
       # Publishing options
       publish_poses: true
@@ -74,18 +66,19 @@ perception:
       
       ## Grasp planning for ICP
       grasp_planning_enabled: true
-      max_grasp_candidates: 100
+      max_grasp_candidates: 3
       
       # ICP-specific visualization
       visualize_icp_alignment: true
       visualize_grasp_poses: true
-
+    
     # ==== SUPERQUADRIC-SPECIFIC PARAMETERS ====
     superquadric:
+      enabled: true
       
       # Fitting parameters
-      outlier_ratio: 0.999
-      use_kmeans_clustering: true
+      outlier_ratio: 0.99
+      use_kmeans_clustering: false
       max_iterations: 1000
       convergence_threshold: 1e-6
       

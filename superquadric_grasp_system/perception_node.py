@@ -17,32 +17,134 @@ sys.path.insert(0, os.path.dirname(__file__))
 from superquadric_grasp_system.managers.camera_manager import CameraManager
 from superquadric_grasp_system.managers.detection_manager import DetectionManager
 from superquadric_grasp_system.managers.point_cloud_manager import PointCloudManager
-from superquadric_grasp_system.managers.pose_estimation_manager import PoseEstimationManager
+from superquadric_grasp_system.managers.estimators.icp_estimator import ICPEstimator
+from superquadric_grasp_system.managers.estimators.superquadric_estimator import SuperquadricEstimator
+from superquadric_grasp_system.managers.config_manager import ConfigManager
 
 class PerceptionNode(Node):
     """Unified perception node supporting multiple pose estimation and detection methods"""
     
     def __init__(self, config_file: str = None):
         super().__init__('perception_node')
+        
+        # Single config manager handles everything
+        self.config = ConfigManager(config_file)
 
-        # Load and process configuration
-        self.config = self._load_config(config_file)
-        base_config = self.config['perception']
-        
-        # Extract core settings
-        self.processing_rate = base_config['processing_rate']
-        self.visualization_rate = base_config['visualization_rate']
-        self.pose_estimation_method = base_config['pose_estimation']['method']
-        
-        # Extract all visualization settings
-        self.viz_config = self._extract_visualization_config()
-        
-        # Log configuration and initialize
-        self._log_configuration()
         self._initialize_managers()
+        self._setup_processing()
         
         self.get_logger().info("Perception Node initialized successfully")
+        
+    # --------------------------------------- INITIALIZATION --------------------------------------------
 
+    def _initialize_managers(self):
+        """Initialize managers with ConfigManager properties"""
+        # Camera manager
+        self.camera_manager = CameraManager(
+            node=self,
+            camera1_sn=self.config.camera1_sn,
+            camera2_sn=self.config.camera2_sn,
+            resolution=self.config.camera_resolution,
+            transform_file_path=self.config.transform_file_path,
+            device=self.config.device
+        )
+        
+        # Detection manager
+        self.detection_manager = DetectionManager(
+            node=self,
+            model_path=self.config.yolo_model_path,
+            confidence_threshold=self.config.confidence_threshold,
+            classes=self.config.detection_classes,
+            class_names=self.config.class_names,
+            device=self.config.device,
+            web_enabled=self.config.web_enabled,
+            web_port=self.config.web_port,
+            web_dir=self.config.web_dir
+        )
+        
+        # Point cloud manager
+        self.point_cloud_manager = PointCloudManager(
+            node=self,
+            device=self.config.device,
+            voxel_size=self.config.voxel_size,
+            workspace_bounds=self.config.workspace_bounds,
+            distance_threshold=self.config.distance_threshold,
+            require_both_cameras=getattr(self.config, 'require_both_cameras', True),
+            publish_enabled=self.config.publish_point_clouds,
+            poisson_reconstruction=self.config.poisson_reconstruction,
+            outlier_removal=self.config.outlier_removal,
+            voxel_downsample_size=self.config.voxel_downsample_size,
+            visualize_fused_workspace=getattr(self.config, 'visualize_fused_workspace', False)
+        )
+        
+        # Pose estimator - method-specific
+        if self.config.pose_method == 'icp':
+            self.pose_estimator = ICPEstimator(
+                node=self,
+                model_folder_path=self.config.model_folder_path,
+                distance_threshold=self.config.icp_distance_threshold,
+                max_iterations=self.config.icp_max_iterations,
+                convergence_threshold=self.config.icp_convergence_threshold,
+                class_names=self.config.class_names,
+                poisson_reconstruction=self.config.poisson_reconstruction,
+                outlier_removal=self.config.outlier_removal,
+                voxel_downsample_size=self.config.voxel_downsample_size,
+                visualize_alignment=self.config.visualize_icp_alignment,
+                visualize_grasps=self.config.visualize_grasp_poses,
+                max_grasp_candidates=getattr(self.config, 'max_grasp_candidates', 3)
+            )
+        else:
+            self.pose_estimator = SuperquadricEstimator(
+                node=self,
+                outlier_ratio=self.config.outlier_ratio,
+                use_kmeans_clustering=self.config.use_kmeans_clustering,
+                gripper_jaw_length=self.config.gripper_jaw_length,
+                gripper_max_opening=self.config.gripper_max_opening,
+                class_names=self.config.class_names,
+                poisson_reconstruction=self.config.poisson_reconstruction,
+                outlier_removal=self.config.outlier_removal,
+                voxel_downsample_size=self.config.voxel_downsample_size,
+                enable_superquadric_fit_visualization=self.config.enable_superquadric_fit_visualization,
+                enable_all_valid_grasps_visualization=self.config.enable_all_valid_grasps_visualization,
+                enable_best_grasps_visualization=self.config.enable_best_grasps_visualization,
+                enable_support_test_visualization=self.config.enable_support_test_visualization,
+                enable_collision_test_visualization=self.config.enable_collision_test_visualization,
+            )
+            
+        managers = [
+            self.camera_manager,
+            self.detection_manager, 
+            self.point_cloud_manager,
+            self.pose_estimator
+        ]
+        
+        for manager in managers:
+            if not manager.initialize():
+                raise RuntimeError(f"Failed to initialize {manager.__class__.__name__}")
+        
+        self.get_logger().info("All managers initialized successfully")
+    
+    def _setup_processing(self):
+        """Setup processing timer"""
+        # Use ConfigManager properties
+        self.processing_rate = self.config.processing_rate
+        self.pose_estimation_method = self.config.pose_method
+        
+        # Threading setup
+        self.frames_lock = threading.Lock()
+        self.latest_frames = {'camera1': None, 'camera2': None}
+        self.latest_detection_results = (None, None)
+        self.latest_point_cloud_data = None
+        self.live_capture_enabled = False
+        self.live_capture_thread = None
+        
+        # Setup timer and web interface
+        self.timer = self.create_timer(1.0/self.processing_rate, self.process_frames)
+        
+        if self.config.web_enabled:
+            self.web_update_rate = self.config.web_update_rate
+            self._start_live_capture()
+            
     # --------------------------------------- MAIN PROCESSING --------------------------------------------
     
     def process_frames(self):
@@ -86,16 +188,16 @@ class PerceptionNode(Node):
             object_classes = point_cloud_data.get('object_classes', [])
 
             # Step 5: Process detected objects for pose estimation
+            workspace_cloud = None
             if object_point_clouds:
-                if self.pose_estimation_manager.is_ready():
-                    workspace_cloud = point_cloud_data.get('fused_workspace', None)
-                
-                success = self.pose_estimation_manager.process_objects(
-                    object_point_clouds, object_classes, workspace_cloud
-                )
-            
-                if success:
-                    self.get_logger().debug(f"Pose estimation completed successfully using {self.pose_estimation_method} method")
+                workspace_cloud = point_cloud_data.get('fused_workspace', None)
+
+            success = self.pose_estimator.process_objects(
+                object_point_clouds, object_classes, workspace_cloud
+            )
+        
+            if success:
+                self.get_logger().debug(f"Pose estimation completed successfully using {self.pose_estimation_method} method")
 
             # Performance monitoring
             total_time = time.time() - start_time
@@ -105,163 +207,6 @@ class PerceptionNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"Error in process_frames: {e}")
-    
-    # --------------------------------------- CONFIGURATION --------------------------------------------
-    
-    def _load_config(self, config_file: str = None) -> Dict[str, Any]:
-        """Load configuration from YAML file"""
-        if config_file is None:
-            # Use ROS2 package share directory to find config file
-            try:
-                package_share_directory = get_package_share_directory('superquadric_grasp_system')
-                config_file = os.path.join(package_share_directory, 'config', 'perception_config.yaml')
-            except Exception:
-                # Fallback to local directory if package not found (development mode)
-                config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'perception_config.yaml')
-
-        try:
-            with open(config_file, 'r') as f:
-                config = yaml.safe_load(f)
-            
-            # Determine device
-            device_str = config['perception']['device']
-            config['perception']['device'] = self._determine_device(device_str)
-            
-            # Add device to all manager configs
-            for manager_config in ['camera', 'detection', 'point_cloud', 'pose_estimation']:
-                config['perception'][manager_config]['device'] = config['perception']['device']
-            
-            self.get_logger().info(f"Loaded configuration from {config_file}")
-            return config
-            
-        except Exception as e:
-            self.get_logger().error(f"Failed to load config from {config_file}: {e}")
-            raise RuntimeError(f"Could not load configuration file: {config_file}")
-        
-    def _extract_visualization_config(self) -> Dict[str, Any]:
-        """Extract and consolidate all visualization settings"""
-        pose_config = self.config['perception']['pose_estimation']
-        web_config = self.config['perception'].get('web_interface', {})
-        
-        point_cloud_config = self.config['perception'].get('point_cloud', {})
-        
-        viz_config = {
-            # Web interface
-            'web_enabled': web_config.get('enabled', False),
-            'web_port': web_config.get('port', 8080),
-            'web_dir': web_config.get('web_dir', '/tmp/grasp_system_live'),
-            'web_update_rate': web_config.get('update_rate', 15.0),
-            'web_image_quality': web_config.get('image_quality', 85),
-            
-            # Superquadric visualizations
-            **pose_config.get('superquadric', {}),
-            
-            # ICP visualizations  
-            **pose_config.get('icp', {}),
-            
-            # Shared visualizations
-            'visualize_fused_workspace': point_cloud_config.get('visualize_fused_workspace', False),
-            'enable_detected_object_clouds_visualization': pose_config.get('enable_detected_object_clouds_visualization', False)
-        }
-        
-        return viz_config
-    
-    def _determine_device(self, device_str: str) -> str:
-        """Determine the device to use based on the input string"""
-        if device_str in ['cuda', 'cpu']:
-            return device_str
-        
-        try:
-            import torch
-            return 'cuda' if torch.cuda.is_available() else 'cpu'
-        except ImportError:
-            return 'cpu'
-        
-    def _log_configuration(self):
-        """Log essential configuration information"""
-        config = self.config['perception']
-        viz = self.viz_config
-        
-        self.get_logger().info(f"Perception Node Configuration:")
-        self.get_logger().info(f"  Method: {self.pose_estimation_method} | Detection: {config['detection']['method']}")
-        self.get_logger().info(f"  Rates: Processing={self.processing_rate}Hz, Viz={self.visualization_rate}Hz")
-        
-        if viz['web_enabled']:
-            self.get_logger().info(f"  Web: Enabled on port {viz['web_port']} @ {viz['web_update_rate']}FPS")
-        
-        # Log method-specific settings
-        if self.pose_estimation_method == 'superquadric' and any(v for k, v in viz.items() if 'visualization' in k):
-            enabled_viz = [k.replace('enable_', '').replace('_visualization', '') for k, v in viz.items() 
-                        if 'visualization' in k and v]
-            if enabled_viz:
-                self.get_logger().info(f"  Superquadric visualizations: {', '.join(enabled_viz)}")
-          
-    # --------------------------------------- INITIALIZATION --------------------------------------------
-
-    def _initialize_managers(self):
-        """Initialize all managers with their configurations"""
-        base_config = self.config['perception']
-        viz_config = self.viz_config
-        
-        # Create managers with merged configs
-        self.camera_manager = CameraManager(self, base_config['camera'])
-        
-        self.detection_manager = DetectionManager(self, {
-            **base_config['detection'],
-            **{k: v for k, v in viz_config.items() if k.startswith('web_') or k == 'enable_detection_visualization'}
-        })
-        
-        self.point_cloud_manager = PointCloudManager(self, {
-            **base_config['point_cloud'],
-        })
-        
-        self.pose_estimation_manager = PoseEstimationManager(self, {
-            **base_config['pose_estimation'],
-            **viz_config
-        })
-        
-        # Initialize shared state
-        self._init_shared_state()
-        
-        # Initialize managers and setup
-        if not self._init_all_managers():
-            raise RuntimeError("Failed to initialize managers")
-        
-        self.setup_publishers_and_subscribers()
-        self._setup_timers_and_threads()
-            
-    def _init_shared_state(self):
-        """Initialize shared state for threading"""
-        self.latest_frames = {'camera1': None, 'camera2': None}
-        self.latest_detection_results = (None, None)
-        self.latest_point_cloud_data = None
-        self.frames_lock = threading.Lock()
-        self.live_capture_enabled = False
-        self.live_capture_thread = None
-
-    def _init_all_managers(self) -> bool:
-        """Initialize all managers in sequence"""
-        managers = [
-            ('camera', self.camera_manager),
-            ('detection', self.detection_manager),
-            ('point_cloud', self.point_cloud_manager),
-            ('pose_estimation', self.pose_estimation_manager)
-        ]
-        
-        for name, manager in managers:
-            if not manager.initialize():
-                self.get_logger().error(f"Failed to initialize {name} manager")
-                return False
-            self.get_logger().info(f"{name.title()} manager initialized")
-        
-        return True
-
-    def _setup_timers_and_threads(self):
-        """Setup processing timer and visualization threads"""
-        self.timer = self.create_timer(1.0/self.processing_rate, self.process_frames)
-        
-        if self.viz_config['web_enabled']:
-            self._start_live_capture()
 
     # --------------------------------------- ROS INTERFACE --------------------------------------------
 
@@ -328,7 +273,7 @@ class PerceptionNode(Node):
                 self.camera_manager,
                 self.detection_manager, 
                 self.point_cloud_manager,
-                self.pose_estimation_manager
+                self.pose_estimator,
             ]
             
             for manager in managers:

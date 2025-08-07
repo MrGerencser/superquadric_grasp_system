@@ -295,7 +295,7 @@ class SuperquadricGraspPlanner:
             self.logger.error(f"Error getting all grasps: {e}")
             return []
 
-    def plan_grasps(self,
+    def plan_filtered_grasps(self,
                     point_cloud_path: str,
                     shape: np.ndarray,
                     scale: np.ndarray,
@@ -384,7 +384,7 @@ class SuperquadricGraspPlanner:
                                 translation=tg))
         return results
 
-    def select_best_grasp_with_criteria(self, grasp_data_list, object_center=None, point_cloud=None):
+    def select_best_grasp_with_criteria(self, grasp_data_list, point_cloud=None):
         """
         Select best grasp with criteria 
         """

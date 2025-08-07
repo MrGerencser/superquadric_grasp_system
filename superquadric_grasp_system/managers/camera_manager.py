@@ -3,41 +3,22 @@ import pyzed.sl as sl
 import cv2
 import torch
 from typing import Tuple, Optional
-from .base_manager import BaseManager
 
 from ..utils.point_cloud_utils import *
 
-class CameraManager(BaseManager):
+class CameraManager:
     """Manages ZED stereo cameras"""
     
-    def __init__(self, node, config):
-        super().__init__(node, config)
-        self.zed1 = None
-        self.zed2 = None
-        self.device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Camera parameters
-        self.camera1_sn = config.get('camera1_sn', 33137761)
-        self.camera2_sn = config.get('camera2_sn', 32689769)
-        
-        # Calibration parameters
-        self.fx1 = self.fy1 = self.cx1 = self.cy1 = None
-        self.fx2 = self.fy2 = self.cx2 = self.cy2 = None
-        
-        # Transform matrices
-        self.rotation1_torch = None
-        self.origin1_torch = None
-        self.rotation2_torch = None
-        self.origin2_torch = None
-        
-        # Image containers
-        self.image1 = None
-        self.depth1 = None
-        self.image2 = None
-        self.depth2 = None
-        self.point_cloud1_ws = None
-        self.point_cloud2_ws = None
-        
+    def __init__(self, node, camera1_sn: int, camera2_sn: int, 
+                 resolution: str, transform_file_path: str, device: str = "cpu"):
+        self.node = node
+        self.logger = node.get_logger()
+        self.camera1_sn = camera1_sn
+        self.camera2_sn = camera2_sn
+        self.resolution = resolution
+        self.transform_file_path = transform_file_path
+        self.device = device
+
     def initialize(self) -> bool:
         """Initialize ZED cameras"""
         try:
@@ -70,7 +51,7 @@ class CameraManager(BaseManager):
         """Configure and open both cameras"""
         try:
             # Get resolution from config
-            resolution_str = self.config.get('resolution', 'HD2K')
+            resolution_str = self.resolution
             resolution_map = {
                 'HD720': sl.RESOLUTION.HD720,
                 'HD1080': sl.RESOLUTION.HD1080, 
@@ -135,8 +116,8 @@ class CameraManager(BaseManager):
         """Load camera transformation matrices"""
         try:
             import yaml
-            transform_file = self.config.get('transform_file_path')
-            
+            transform_file = self.transform_file_path
+
             with open(transform_file, 'r') as file:
                 transforms = yaml.safe_load(file)
             
@@ -169,7 +150,7 @@ class CameraManager(BaseManager):
         self.depth2 = sl.Mat()
         
         # Get resolution from config and map to actual dimensions
-        resolution_str = self.config.get('resolution', 'HD2K')
+        resolution_str = self.resolution
         resolution_dims = {
             'HD720': (1280, 720),
             'HD1080': (1920, 1080),

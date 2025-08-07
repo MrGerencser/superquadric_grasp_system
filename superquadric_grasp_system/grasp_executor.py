@@ -4,7 +4,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool
-from franka_msgs.action import Grasp, Move, Homing
+from franka_msgs.action import Grasp, Move
 from sensor_msgs.msg import JointState
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -13,6 +13,7 @@ import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R_simple
 from enum import Enum
+import copy
 
 
 class GraspState(Enum):
@@ -71,7 +72,7 @@ class GraspExecutor(Node):
                 'state_check': 0.1  # seconds between state checks
             },
             'drop_box': {
-                'x': 0.25, 'y': 0.23, 'z': 0.05
+                'x': 0.2, 'y': 0.6, 'z': 0.18
             }
         }
         
@@ -179,7 +180,7 @@ class GraspExecutor(Node):
         if self._poses_are_close(
             self.current_robot_pose, 
             self.target_pose,
-            position_tolerance=0.02,
+            position_tolerance=0.04,
             orientation_tolerance=0.2
         ):
             return 'completed'
@@ -250,10 +251,6 @@ class GraspExecutor(Node):
     
     def _setup_gripper(self):
         """Setup gripper action clients"""
-        self.homing_client = ActionClient(
-            self, Homing, '/fr3_gripper/homing', 
-            callback_group=self.callback_group
-        )
         self.move_client = ActionClient(
             self, Move, '/fr3_gripper/move', 
             callback_group=self.callback_group
@@ -270,7 +267,6 @@ class GraspExecutor(Node):
     def _wait_for_gripper_servers(self):
         """Wait for all gripper action servers"""
         servers = [
-            (self.homing_client, 'Homing'),
             (self.move_client, 'Move'),
             (self.grasp_client, 'Grasp')
         ]
@@ -286,10 +282,12 @@ class GraspExecutor(Node):
                 raise SystemExit('ROS shutdown while waiting for servers')
     
     def _home_gripper(self):
-        """Home the gripper"""
-        self.get_logger().info("Homing gripper...")
-        goal = Homing.Goal()
-        self.homing_client.send_goal_async(goal)
+        """Home the gripper by opening it to max width"""
+        self.get_logger().info(f"Homing gripper by opening to {self.config['gripper']['max_width']*1000:.0f}mm")
+        goal = Move.Goal()
+        goal.width = self.config['gripper']['max_width']
+        goal.speed = self.config['gripper']['speed']
+        self.move_client.send_goal_async(goal)
     
     def _create_home_pose(self):
         """Create home pose"""
@@ -328,6 +326,34 @@ class GraspExecutor(Node):
         pose.pose.orientation.z = qz
         
         return pose
+    
+    def _compute_approach_vector(self, pose):
+        """
+        Return the unit vector that points *into* the gripper
+        (its local –Z axis) expressed in the world frame.
+        """
+        quat = np.array([pose.orientation.x,
+                         pose.orientation.y,
+                         pose.orientation.z,
+                         pose.orientation.w])
+        rot  = R_simple.from_quat(quat)  # SciPy/ROS use (x,y,z,w)
+        local_z_neg = np.array([0.0, 0.0, 1.0])
+        world_vec = rot.apply(local_z_neg)
+        return world_vec / np.linalg.norm(world_vec)
+
+    def _create_pre_grasp_pose(self, grasp_ps, distance):
+        """
+        Build a PoseStamped offset *opposite* the approach direction.
+        Works for top-down and side grasps alike.
+        """
+        v = self._compute_approach_vector(grasp_ps.pose)
+
+        pre = copy.deepcopy(grasp_ps)
+        pre.header.stamp = self.get_clock().now().to_msg()
+        pre.pose.position.x -= distance * v[0]
+        pre.pose.position.y -= distance * v[1]
+        pre.pose.position.z -= distance * v[2]
+        return pre
     
     def _create_offset_pose(self, base_pose, z_offset=0.0):
         """Create pose with Z offset from base pose"""
@@ -570,7 +596,7 @@ class GraspExecutor(Node):
     def _handle_moving_to_pre_grasp_state(self):
         """Handle moving to pre-grasp state with real feedback"""
         if self.current_future is None:
-            pre_grasp_pose = self._create_offset_pose(
+            pre_grasp_pose = self._create_pre_grasp_pose(
                 self.active_grasp_pose, 
                 self.config['offsets']['pre_grasp']
             )

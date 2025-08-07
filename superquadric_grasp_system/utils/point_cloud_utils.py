@@ -1,22 +1,23 @@
-import torch
+# superquadric_grasp_system/utils/point_cloud_utils.py
 import numpy as np
-from typing import Tuple, List
 import open3d as o3d
-
+import torch
 import rclpy.logging
+from typing import Tuple, List, Optional
 
 class PointCloudProcessor:
     """Handles shared point cloud preprocessing operations"""
     
-    def __init__(self, config):
-        self.poisson_reconstruction = config.get('poisson_reconstruction', False)
-        self.outlier_removal = config.get('outlier_removal', True)
-        self.voxel_downsample_size = config.get('voxel_downsample_size', 0.002)
+    def __init__(self, poisson_reconstruction: bool = False,
+                 outlier_removal: bool = True,
+                 voxel_downsample_size: float = 0.002,
+                 enable_detected_object_clouds_visualization: bool = False):
+        self.poisson_reconstruction = poisson_reconstruction
+        self.outlier_removal = outlier_removal
+        self.voxel_downsample_size = voxel_downsample_size
+        self.enable_detected_object_clouds_visualization = enable_detected_object_clouds_visualization
         
-        # Visualization settings
-        self.enable_detected_object_clouds_visualization = config.get('enable_detected_object_clouds_visualization', False)
         self.visualizer = None  # Will be set by the estimator if needed
-        
         self.logger = rclpy.logging.get_logger('point_cloud_processor')
 
     def set_visualization_components(self, visualizer, *args, **kwargs):

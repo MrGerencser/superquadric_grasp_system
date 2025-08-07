@@ -1,25 +1,19 @@
 # Superquadric Grasp System
-
-> **ROS 2 pipeline for grasping objects** using two interchangeable perception paths:  
-> (1) **Model-based** (ICP to known CAD/template) and (2) **Learning-free, model-free** (**hidden superquadrics**).   
-> Designed for **ZED** cameras and **Franka Emika Robot** arms.
+*ROS 2 pipeline for grasping objects** using two interchangeable perception paths:  
+(1) **Model-based** (ICP to known CAD/template) and (2) **Learning-free, model-free** (**hidden superquadrics**).   
+Designed for **ZED** cameras and **Franka Emika Robot** arms.*
 
 <p align="center">
-  <img alt="Pipeline diagram" src="resource/pipeline_overview.png" width="720">
+  <img src="resource/grasp_demo.gif" width="600" alt="Demo: grasping mugs, boxes and plush toys"/>
 </p>
 
-[![ROS 2](https://img.shields.io/badge/ROS2-Humble%20%7C%20Iron-blue)](#prerequisites)
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-orange)](#prerequisites)
-[![Camera](https://img.shields.io/badge/Camera-ZED%202i-9cf)](#hardware)
-[![Robot](https://img.shields.io/badge/Robot-Franka%20Panda-6aa84f)](#robot-integration)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+**Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (ZED SDK 5.0.5) · Franka Panda Emika
 
 ---
 
 ## Table of Contents
 
-- [What’s inside](#whats-inside)
-- [How it works](#how-it-works)
+- [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -32,7 +26,7 @@
 
 ---
 
-## How it works
+## Features
 
 1. **Detect & Segment**
    - Get RGB/Depth with [ZED SDK](https://www.stereolabs.com/en-ch/developers/release).
@@ -48,8 +42,6 @@
 
 4. **Plan & Execute**
    - Publish grasp target → execute (this repo includes a demo [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) that uses this [cartesian-impedance-controller]([https://github.com/MrGerencser/YOLO-Finetune](https://github.com/MrGerencser/cartesian_impedance_control)). 
-
-A minimal block diagram:
 
 ## Prerequisites
 

@@ -1,19 +1,28 @@
 # Superquadric Grasp System
-*ROS 2 pipeline for grasping objects** using two interchangeable perception paths:  
-(1) **Model-based** (ICP to known CAD/template) and (2) **Learning-free, model-free** (**hidden superquadrics**).   
-Designed for **ZED** cameras and **Franka Emika Robot** arms.*
+
+*ROS 2 pipeline for robotic grasping with two interchangeable perception paths:*  
+(1) **Model-based** – ICP alignment to known CAD / templates  
+(2) **Learning-free, model-free** – **hidden superquadrics**  
+
+*Optimised for **ZED** cameras and **Franka Emika Panda** arms.*
+
+## Features
+1. **Detect & segment** — YOLO-v11seg (use pre-trained models or your own)  
+2. **Fuse & crop** — merge multi-view clouds, isolate each object  
+3. **Estimate pose / grasps**  
+   - **Model-based:** ICP → object pose (+ optional CAD grasps)  
+   - **Model-free:** hidden superquadrics → generate antipodal grasp candidates → select best grasp pose based on filtering and scoring
+4. **Plan & execute** — Cartesian-impedance demo for Franka Panda Emika Robot included  
 
 <p align="center">
   <img src="resource/grasp_demo.gif" width="600" alt="Demo: grasping mugs, boxes and plush toys"/>
 </p>
 
-**Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (ZED SDK 5.0.5) · Franka Panda Emika
+**Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (SDK 5.0.5) · Franka Panda Emika
 
 ---
 
 ## Table of Contents
-
-- [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -26,28 +35,11 @@ Designed for **ZED** cameras and **Franka Emika Robot** arms.*
 
 ---
 
-## Features
-
-1. **Detect & Segment**
-   - Get RGB/Depth with [ZED SDK](https://www.stereolabs.com/en-ch/developers/release).
-   - Run YOLO object segmentation (pre-trained models can be downloaded here (link), train your own model following this repo [YOLO-Finetune](https://github.com/MrGerencser/YOLO-Finetune)).
-
-2. **Fuse & Crop**
-   - Fuse workspace point clouds from one or more cameras.
-   - Crop out the per-object point cloud using the segmentation mask(s).
-
-3. **Estimate Pose / Grasp**
-   - **ICP path:** register object point cloud to a known model → object pose (and grasp pose if defined on the model). Usage example here.
-   - **Superquadric path:** fit hidden superquadrics to the object cloud → generate antipodal grasp candidates → rank. Usage example here.
-
-4. **Plan & Execute**
-   - Publish grasp target → execute (this repo includes a demo [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) that uses this [cartesian-impedance-controller]([https://github.com/MrGerencser/YOLO-Finetune](https://github.com/MrGerencser/cartesian_impedance_control)). 
-
 ## Prerequisites
 
 - ROS2 (Humble/Iron recommended)
 - Ubuntu 20.04/22.04
-- [Franka ROS2](https://github.com/frankarobotics/franka_ros2) packages 
+- Franka ROS2 workspace with [Franka ROS2](https://github.com/frankarobotics/franka_ros2) packages 
 - [ZED SDK](https://www.stereolabs.com/en-ch/developers/release)
 
 ## Installation
@@ -70,13 +62,11 @@ Designed for **ZED** cameras and **Franka Emika Robot** arms.*
    source install/setup.bash
    ```
 
-## Usage
+## Quick Start
 
-### Basic Launch
-
-```bash
-ros2 run superquadric_grasp_system perception_node
-```
+1. Download Object models
+2. Download yolo models or train your own. Check out this repo for recording some pictures for [YOLO-Finetune](https://github.com/MrGerencser/YOLO-Finetune).
+3. Get correct camera transforms in config file. (Can be done by running this repo (camera calibration.
 
 ### Configuration
 
@@ -91,6 +81,30 @@ Edit the configuration file at `config/grasp_params.yaml` to adjust:
 ```bash
 # Terminal 1: Launch the system
 ros2 run superquadric_grasp_system perception_node
+```
+
+1. **Detect & Segment** – YOLOv11seg (pre-trained or bring-your-own weights)
+   - Get RGB/Depth with [ZED SDK](https://www.stereolabs.com/en-ch/developers/release).
+   - Run YOLO object segmentation (pre-trained models can be downloaded here (link), train your own model following this repo [YOLO-Finetune](https://github.com/MrGerencser/YOLO-Finetune)).
+
+2. **Fuse & Crop**
+   - Fuse workspace point clouds from one or more cameras.
+   - Crop out the per-object point cloud using the segmentation mask(s).
+
+3. **Estimate Pose / Grasp**
+   - **ICP path:** register object point cloud to a known model → object pose (and grasp pose if defined on the model). Usage example here.
+   - **Superquadric path:** fit hidden superquadrics to the object cloud → generate antipodal grasp candidates → rank. Usage example here.
+
+4. **Plan & Execute**
+   - Publish grasp target → execute (this repo includes a demo [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) that uses this [cartesian-impedance-controller]([https://github.com/MrGerencser/YOLO-Finetune](https://github.com/MrGerencser/cartesian_impedance_control)). 
+
+### Basic Launch
+
+```bash
+ros2 run superquadric_grasp_system perception_node
+```
+
+
 
 # Terminal 2: Trigger grasp planning
 ros2 service call /plan_grasp superquadric_grasp_system/srv/PlanGrasp "{target_object: 'cup'}"

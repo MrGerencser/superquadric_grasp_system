@@ -27,7 +27,8 @@ Includes the complete chain: **perception → grasp planning → execution**.
 
 - [System Overview](#system-overview)
 - [Prerequisites](#prerequisites)
-- [Installation & Quick Start](#installation--quick-start)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Running Examples](#running-examples)
 - [Controlling the Robot](#controlling-the-robot)
@@ -63,7 +64,7 @@ flowchart LR
 
 ---
 
-## Installation & Quick Start
+## Installation
 
 1. **Clone the package into your ROS 2 workspace**
    ```bash
@@ -77,21 +78,113 @@ flowchart LR
    rosdep install --from-paths src --ignore-src -r -y
    ```
 
-3. **Build**
+3. **Download Finetuned YOLO models**
+   ```bash
+   python scripts/download_yolo_models.py   # or provide your own CAD files
+   ```
+   
+4. **Download object models (required for ICP)**
+   ```bash
+   python scripts/download_object_models.py   # or provide your own CAD files
+   ```
+  
+5. **Build**
    ```bash
    colcon build --packages-select superquadric_grasp_system
    source install/setup.bash
    ```
 
-4. **Download object models (required for ICP)**
-   ```bash
-   python scripts/download_models.py   # or provide your own CAD files
+## Quick Start
+
+1. **Set camera transforms**  
+   Edit `config/transformations.yaml` (use the [camera calibration tool](https://github.com/MrGerencser/camera_calibration) to obtain transforms).
+
+2. **Configure perception settings**  
+   Edit `config/perception_config.yaml`:
+   ```yaml
+   grasping_method: "icp"         # Options: "icp", "superquadric"
+   yolo_model_path: "models/yolov11seg.onnx"
+   voxel_size: 0.005
+   workspace_bounds: [-0.3, 0.3, -0.3, 0.3, 0.0, 0.4]
    ```
 
-5. **Launch the perception node**
+3. **Rebuild after config/model changes**
+   ```bash
+   cd ~/franka_ros2_ws
+   colcon build --packages-select superquadric_grasp_system
+   source install/setup.bash
+   ```
+
+4. **Launch perception**
    ```bash
    ros2 run superquadric_grasp_system perception_node
    ```
+
+5. **Monitor output**
+   ```bash
+   ros2 topic echo /perception/object_pose
+   ```
+
+---
+
+## Running Examples
+
+- [**ICP (Model-based)**](examples/icp.md)  
+  CAD-based alignment using ICP for known objects with available 3D models.
+
+- [**Superquadric (Model-free)**](examples/superquadric.md)  
+  Shape approximation from point clouds without requiring CAD models.
+
+---
+
+## Controlling the Robot
+
+This repo includes a `grasp_executor.py` demo for grasp execution with the Cartesian Impedance Controller.
+
+**Example workflow:**
+```bash
+# Terminal 1: Launch perception
+ros2 run superquadric_grasp_system perception_node
+
+# Terminal 2: Launch Cartesian impedance control
+ros2 launch cartesian_impedance_control cartesian_impedance_controller.launch.py
+
+# Terminal 3: Run grasp executor
+python3 superquadric_grasp_system/grasp_executor.py
+```
+
+Set drop location inside `grasp_executor.py`:
+```python
+'drop_box': {'x': 0.2, 'y': 0.6, 'z': 0.18}
+```
+
+
+
+
+## Quick Start
+
+1. **Set Camera Transforms**  
+  Define camera transforms in:  
+  `config/transformations.yaml`
+  Use the [camera calibration tool](https://github.com/MrGerencser/camera_calibration) for getting transformations.
+
+2. **Rebuild the Package**
+  After changing any config files or models:
+    ```bash
+   cd ~/franka_ros2_ws
+   colcon build --packages-select superquadric_grasp_system
+   source install/setup.bash
+   ```
+
+3. **Launch the perception node**
+   ```bash
+   ros2 run superquadric_grasp_system perception_node
+   ```
+
+**Monitor output:**  
+  ```bash
+  ros2 topic echo /perception/object_pose
+  ```
 
 ---
 
@@ -114,20 +207,11 @@ flowchart LR
 
 ## Running Examples
 
-**ICP (Model-based)**
-```bash
-ros2 run superquadric_grasp_system perception_node --ros-args -p grasping_method:=icp
-```
+- [**ICP (Model-based)**](examples/icp.md)  
+  CAD-based alignment using ICP for known objects with available 3D models.
 
-**Superquadric (Model-free)**
-```bash
-ros2 run superquadric_grasp_system perception_node --ros-args -p grasping_method:=superquadric
-```
-
-**Monitor output:**
-```bash
-ros2 topic echo /perception/object_pose
-```
+- [**Superquadric (Model-free)**](examples/superquadric.md)  
+  Shape approximation from point clouds without requiring CAD models.
 
 ---
 

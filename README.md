@@ -1,54 +1,74 @@
 # Superquadric Grasp System
 
-*ROS 2 pipeline for robotic grasping with two interchangeable perception paths:*  
-(1) **Model-based** – ICP alignment to known CAD / templates  
-(2) **Learning-free, model-free** – **hidden superquadrics**  
+> **ROS 2 grasping pipeline** for industrial and research use, supporting two interchangeable perception strategies:  
+> 1. **Model-based** — CAD/template alignment with ICP  
+> 2. **Model-free, learning-free** — Hidden superquadrics for grasp pose generation
 
-*Optimised for **ZED** cameras and **Franka Emika Panda** arms.*
-
-## Features
-1. **Detect & segment** — YOLO-v11seg (use pre-trained models or your own)  
-2. **Fuse & crop** — merge multi-view clouds, isolate each object  
-3. **Estimate pose / grasps**  
-   - **Model-based:** ICP → object pose (+ optional CAD grasps)  
-   - **Model-free:** hidden superquadrics → generate antipodal grasp candidates → select best grasp pose based on filtering and scoring
-4. **Plan & execute** — Cartesian-impedance demo for Franka Panda Emika Robot included  
+Optimized for **ZED stereo cameras** and **Franka Emika Panda** arms.  
+Includes the complete chain: **perception → grasp planning → execution**.
 
 <p align="center">
   <img src="resource/grasp_demo.gif" width="600" alt="Demo: grasping mugs, boxes and plush toys"/>
 </p>
 
-**Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (SDK 5.0.5) · Franka Panda Emika
+---
+
+## Key Features
+
+- **Plug-and-play perception** — Swap between CAD-based ICP and model-free superquadric fitting  
+- **Multi-view fusion** — Combine point clouds from multiple ZED cameras  
+- **Flexible grasp planning** — Supports both fixed CAD grasps and automatic grasp synthesis  
+- **Robot-ready** — Includes Cartesian impedance demo for Franka Emika Panda  
+- **Extensible** — Modular ROS 2 node structure for adding new perception or grasp planners  
 
 ---
 
 ## Table of Contents
+
+- [System Overview](#system-overview)
 - [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Quick start](#quick-start)
-- [Examples](#examples)
-- [Controlling The Robot](#controlling-the-robot)
+- [Installation & Quick Start](#installation--quick-start)
+- [Configuration](#configuration)
+- [Running Examples](#running-examples)
+- [Controlling the Robot](#controlling-the-robot)
 - [Troubleshooting](#troubleshooting)
 - [Citations](#citations)
 - [License & Contact](#license--contact)
 
 ---
 
-## Prerequisites
+## System Overview
 
-- ROS2 (Humble/Iron recommended)
-- Ubuntu 20.04/22.04
-- Franka ROS2 workspace with [Franka ROS2](https://github.com/frankarobotics/franka_ros2) packages 
-- [ZED SDK](https://www.stereolabs.com/en-ch/developers/release)
+```mermaid
+flowchart LR
+    CAM1[ZED Camera 1] -->|RGB + Depth| SEG[YOLO-v11seg Segmentation]
+    CAM2[ZED Camera 2] -->|RGB + Depth| SEG
+    SEG --> FUSE[Multi-view Point Cloud Fusion]
+    FUSE -->|Object Point Clouds| METHOD{Grasping Method}
+    METHOD -->|ICP + CAD| ICP_METHOD[CAD-based Pose Estimation]
+    METHOD -->|Superquadric Fit| SQ_METHOD[Learning-free Shape Approximation]
+    ICP_METHOD --> GRASPS[Grasp Pose Selection]
+    SQ_METHOD --> GRASPS
+    GRASPS --> EXEC[Cartesian Impedance Control → Franka Arm]
+```
 
 ---
 
-## Installation
+## Prerequisites
 
-1. **Clone the repository**
+- ROS 2 Humble (Ubuntu 22.04)  
+- [ZED SDK 5.0.5](https://www.stereolabs.com/en-ch/developers/release)  
+- [Franka ROS 2 packages](https://github.com/frankarobotics/franka_ros2)  
+- CUDA-compatible GPU for YOLO-v11seg segmentation  
+
+---
+
+## Installation & Quick Start
+
+1. **Clone the package into your ROS 2 workspace**
    ```bash
    cd ~/franka_ros2_ws/src
-   git clone <repository-url> superquadric_grasp_system
+   git clone https://github.com/<your_repo>.git superquadric_grasp_system
    ```
 
 2. **Install dependencies**
@@ -57,126 +77,109 @@
    rosdep install --from-paths src --ignore-src -r -y
    ```
 
-3. **Build the package**
+3. **Build**
    ```bash
    colcon build --packages-select superquadric_grasp_system
    source install/setup.bash
    ```
 
----
-
-## Quick Start
-
-### 1. Download Object Models
-- [Download link – TBD](https://www.google.ch)
-
-### 2. Set Up YOLO Segmentation
-- Download pre-trained YOLOv11seg weights **or** train your own.
-- Use the [YOLO-Finetune repo](https://github.com/MrGerencser/YOLO-Finetune) for:
-  - Data collection
-
-### 3. Set Camera Transforms
-- Define camera transforms in:  
-  `config/transformations.yaml`
-- Use the [camera calibration tool](https://github.com/MrGerencser/camera_calibration) for gtting transformations.
-
-### 4. Configure System Parameters
-Edit the main perception config file at:  
-`config/perception_config.yaml`
-
-Key settings to check:
-- **Camera settings:** serial numbers, resolution, transform file path
-- **YOLO model path** and class IDs/names
-- **Grasping method:** `"icp"` or `"superquadric"`
-- **Point cloud filtering**, voxel sizes, workspace bounds
-- **Visualization options**
-
-### 5. Rebuild the Package
-After changing any config files or models:
-```bash
-   cd ~/franka_ros2_ws
-   colcon build --packages-select superquadric_grasp_system
-   source install/setup.bash
+4. **Download object models (required for ICP)**
+   ```bash
+   python scripts/download_models.py   # or provide your own CAD files
    ```
 
-### 6. Launch the Perception Node
+5. **Launch the perception node**
+   ```bash
+   ros2 run superquadric_grasp_system perception_node
+   ```
+
+---
+
+## Configuration
+
+1. **Camera Transforms**  
+   Edit `config/transformations.yaml`  
+   Use the camera calibration tool to obtain transforms.
+
+2. **Perception Settings**  
+   Edit `config/perception_config.yaml`:
+   ```yaml
+   grasping_method: "icp"         # Options: "icp", "superquadric"
+   yolo_model_path: "models/yolov11seg.onnx"
+   voxel_size: 0.005
+   workspace_bounds: [-0.3, 0.3, -0.3, 0.3, 0.0, 0.4]
+   ```
+
+---
+
+## Running Examples
+
+**ICP (Model-based)**
 ```bash
-# Terminal 1: Launch the system
-ros2 run superquadric_grasp_system perception_node
+ros2 run superquadric_grasp_system perception_node --ros-args -p grasping_method:=icp
 ```
 
-### 7. Monitor Published Object Poses
+**Superquadric (Model-free)**
 ```bash
-# Terminal 2: Echo Poses
+ros2 run superquadric_grasp_system perception_node --ros-args -p grasping_method:=superquadric
+```
+
+**Monitor output:**
+```bash
 ros2 topic echo /perception/object_pose
 ```
 
 ---
 
-## Examples
-ICP example   
-Superquadric example   
+## Controlling the Robot
 
----
+This repo includes a `grasp_executor.py` demo for grasp execution with the Cartesian Impedance Controller.
 
-## Controlling The Robot
-
-Once the perception node is running and object poses or grasp poses are being published, you can use the included executor script to send commands to the robot.
-
-### Demo: Grasp Execution
-
-This repository includes a [grasp_executor.py](superqaudric_grasp_system/grasp_executor.py) demo script for grasp execution which works with this [Cartesian Impedance Controller](https://github.com/MrGerencser/cartesian_impedance_control).   
-In [grasp_executor.py](superqaudric_grasp_system/grasp_executor.py) you can specify wherevyou want to place the object by adjusting
+**Example workflow:**
 ```bash
-'drop_box': {'x': 0.2, 'y': 0.6, 'z': 0.18}
-```
+# Terminal 1: Launch perception
+ros2 run superquadric_grasp_system perception_node
 
-Launch Cartesian Impdedance Controller
-```bash
-# Terminal 3: Launch Cartesian Impdedance Control
+# Terminal 2: Launch Cartesian impedance control
 ros2 launch cartesian_impedance_control cartesian_impedance_controller.launch.py
+
+# Terminal 3: Run grasp executor
+python3 superquadric_grasp_system/grasp_executor.py
 ```
 
-Run Grasp Executor Node 
-```bash
-# Terminal 4: Run Grasp Executor Node
-superquadric_grasp_system/grasp_executor.py
+Set drop location inside `grasp_executor.py`:
+```python
+'drop_box': {'x': 0.2, 'y': 0.6, 'z': 0.18}
 ```
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
+**No point cloud received**
+- Check camera connection and drivers
+- Verify topic names in config match actual published topics
 
-1. **No point cloud received**
-   - Check camera connection and drivers
-   - Verify topic names match configuration
+**Poor shape fitting**
+- Adjust `fitting_tolerance` parameter
+- Ensure good lighting and clear object visibility
 
-2. **Poor shape fitting**
-   - Adjust `fitting_tolerance` parameter
-   - Ensure adequate lighting and object visibility
-
-3. **Failed grasp execution**
-   - Check robot safety limits
-   - Verify collision detection settings
+**Failed grasp execution**
+- Check robot safety limits and collision settings
+- Verify transforms between perception and robot frames
 
 ---
 
-## Contributing
+## Citations
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/new-feature`)
-3. Commit changes (`git commit -am 'Add new feature'`)
-4. Push to branch (`git push origin feature/new-feature`)
-5. Create a Pull Request
+If you use this work, please cite:
+- YOLOv11 Segmentation
+- Hidden Superquadrics
+- ICP
 
 ---
 
-## License
+## License & Contact
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contact
-
-For questions and support, please open an issue or contact [gejan@ethz.ch].
+Licensed under the MIT License.  
+For questions and support, open an issue or

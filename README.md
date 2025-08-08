@@ -11,6 +11,8 @@ Includes the complete chain: **perception → grasp planning → execution**.
   <img src="resource/grasp_demo.gif" width="600" alt="Demo: grasping mugs, boxes and plush toys"/>
 </p>
 
+**Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (ZED SDK 5.0.5) · Franka Panda Emika
+
 ---
 
 ## Key Features

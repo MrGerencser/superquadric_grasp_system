@@ -176,15 +176,6 @@ Set drop location inside `grasp_executor.py`:
 
 ---
 
-## Citations
-
-If you use this work, please cite:
-- YOLOv11 Segmentation
-- Hidden Superquadrics
-- ICP
-
----
-
 ## License & Contact
 
 Licensed under the MIT License.  

@@ -2,8 +2,9 @@
 
 > **ROS 2 grasping pipeline** - modular setup for industrial and research use, supporting two interchangeable perception strategies:  
 > 1. "**Model-based** — CAD/template alignment via ICP. Each model includes a grasp YAML file with predefined grasp points, enabling direct pose-to-grasp mapping."
-> 2. "**Model-free, learning-free** — Hidden superquadrics for grasp pose generation. [Original Paper](https://arxiv.org/abs/2305.06591)."
+> 2. "**Model-free, learning-free** — Hidden superquadrics for grasp pose generation. [Original Paper](https://arxiv.org/abs/2305.06591)"
 
+Object detection is powered by a **YOLO segmentation** model (replaceable with other detection methods if desired).
 Optimized for **ZED stereo cameras** and **Franka Emika Panda** arms.  
 Provides an end-to-end chain: **perception → grasp planning → execution**.
 
@@ -120,13 +121,14 @@ flowchart LR
   CAD-based alignment using ICP for known objects with available 3D models.
 
 - [**Superquadric (Model-free)**](examples/superquadric.md)  
-  Shape approximation from point clouds without requiring CAD models.
+  Fits hidden superquadrics from raw point clouds — no CAD required.
 
 ---
 
 ## Controlling the Robot
 
-This repo includes a `grasp_executor.py` demo for grasp execution with the Cartesian Impedance Controller.
+This repo includes a [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) demo for grasp execution with this [Cartesian Impedance Controller](https://github.com/MrGerencser/cartesian_impedance_control).       
+[grasp_executor.py](superquadric_grasp_system/grasp_executor.py) doesn't include object avoidance or other safety filters.
 
 **Example workflow:**
 ```bash
@@ -137,7 +139,7 @@ ros2 run superquadric_grasp_system perception_node
 ros2 launch cartesian_impedance_control cartesian_impedance_controller.launch.py
 
 # Terminal 3: Run grasp executor
-python3 superquadric_grasp_system/grasp_executor.py
+ros2 run superquadric_grasp_system grasp_executor
 ```
 
 Set drop location inside `grasp_executor.py`:
@@ -148,18 +150,6 @@ Set drop location inside `grasp_executor.py`:
 ---
 
 ## Troubleshooting
-
-**No point cloud received**
-- Check camera connection and drivers
-- Verify topic names in config match actual published topics
-
-**Poor shape fitting**
-- Adjust `fitting_tolerance` parameter
-- Ensure good lighting and clear object visibility
-
-**Failed grasp execution**
-- Check robot safety limits and collision settings
-- Verify transforms between perception and robot frames
 
 ---
 

@@ -1,46 +1,15 @@
 # Superquadric Grasp System
 
-> **ROS 2 grasping pipeline** for industrial and research use, supporting two interchangeable perception strategies:  
-> 1. **Model-based** — CAD/template alignment with ICP  
-> 2. **Model-free, learning-free** — Hidden superquadrics for grasp pose generation
+> **ROS 2 grasping pipeline** - modular setup for industrial and research use, supporting two interchangeable perception strategies:  
+> 1. "**Model-based** — CAD/template alignment via ICP. Each model includes a grasp YAML file with predefined grasp points, enabling direct pose-to-grasp mapping."
+> 2. "**Model-free, learning-free** — Hidden superquadrics for grasp pose generation. [Original Paper](https://arxiv.org/abs/2305.06591)."
 
 Optimized for **ZED stereo cameras** and **Franka Emika Panda** arms.  
-Includes the complete chain: **perception → grasp planning → execution**.
+Provides an end-to-end chain: **perception → grasp planning → execution**.
 
 <p align="center">
   <img src="resource/grasp_demo.gif" width="600" alt="Demo: grasping mugs, boxes and plush toys"/>
 </p>
-
-**Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (ZED SDK 5.0.5) · Franka Panda Emika
-
----
-
-## Key Features
-
-- **Plug-and-play perception** — Swap between CAD-based ICP and model-free superquadric fitting  
-- **Multi-view fusion** — Combine point clouds from multiple ZED cameras  
-- **Flexible grasp planning** — Supports both fixed CAD grasps and automatic grasp synthesis  
-- **Robot-ready** — Includes Cartesian impedance demo for Franka Emika Panda  
-- **Extensible** — Modular ROS 2 node structure for adding new perception or grasp planners  
-
----
-
-## Table of Contents
-
-- [System Overview](#system-overview)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Running Examples](#running-examples)
-- [Controlling the Robot](#controlling-the-robot)
-- [Troubleshooting](#troubleshooting)
-- [Citations](#citations)
-- [License & Contact](#license--contact)
-
----
-
-## System Overview
 
 ```mermaid
 flowchart LR
@@ -55,14 +24,30 @@ flowchart LR
     GRASPS --> EXEC[Cartesian Impedance Control → Franka Arm]
 ```
 
+**Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (ZED SDK 5.0.5) · Franka Panda Emika
+
+---
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Running Examples](#running-examples)
+- [Controlling the Robot](#controlling-the-robot)
+- [Troubleshooting](#troubleshooting)
+- [Citations](#citations)
+- [License & Contact](#license--contact)
+
+
 ---
 
 ## Prerequisites
 
 - ROS 2 Humble (Ubuntu 22.04)  
-- [ZED SDK 5.0.5](https://www.stereolabs.com/en-ch/developers/release)  
-- [Franka ROS 2 packages](https://github.com/frankarobotics/franka_ros2)  
-- CUDA-compatible GPU for YOLO-v11seg segmentation  
+- [ZED SDK](https://www.stereolabs.com/en-ch/developers/release) - (tested with version 5.0.5)
+- [Franka ROS 2 packages](https://github.com/frankarobotics/franka_ros2) (tested with v0.1.15)
 
 ---
 
@@ -71,7 +56,7 @@ flowchart LR
 1. **Clone the package into your ROS 2 workspace**
    ```bash
    cd ~/franka_ros2_ws/src
-   git clone https://github.com/<your_repo>.git superquadric_grasp_system
+   git clone https://github.com/MrGerencser/superquadric_grasp_system.git
    ```
 
 2. **Install dependencies**
@@ -82,7 +67,7 @@ flowchart LR
 
 3. **Download Finetuned YOLO models**
    ```bash
-   python scripts/download_yolo_models.py   # or provide your own CAD files
+   python scripts/download_yolo_models.py   # or provide your own finetuned YOLO model
    ```
    
 4. **Download object models (required for ICP)**
@@ -105,9 +90,9 @@ flowchart LR
    Edit `config/perception_config.yaml`:
    ```yaml
    grasping_method: "icp"         # Options: "icp", "superquadric"
-   yolo_model_path: "models/yolov11seg.onnx"
+   yolo_model_path: "models/yolov11seg.pt"
    voxel_size: 0.005
-   workspace_bounds: [-0.3, 0.3, -0.3, 0.3, 0.0, 0.4]
+   workspace_bounds: [-0.3, 0.3, -0.3, 0.3, 0.0, 0.4] #in robot frame
    ```
 
 3. **Rebuild after config/model changes**

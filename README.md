@@ -51,6 +51,7 @@ flowchart LR
 - ROS 2 Humble (Ubuntu 22.04)  
 - [ZED SDK](https://www.stereolabs.com/en-ch/developers/release) - (tested with version 5.0.5)
 - [Franka ROS 2 packages](https://github.com/frankarobotics/franka_ros2) (tested with v0.1.15)
+- [EMS-superquadric_fitting](https://github.com/bmlklwx/EMS-superquadric_fitting) (for superqaudric-recovery)
 
 ---
 

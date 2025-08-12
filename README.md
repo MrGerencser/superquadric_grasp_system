@@ -4,7 +4,7 @@
 > 1. "**Model-based** — CAD/template alignment via ICP. Each model includes a grasp YAML file with predefined grasp points, enabling direct pose-to-grasp mapping."
 > 2. "**Model-free, learning-free** — Hidden superquadrics for grasp pose generation. [Original Paper](https://arxiv.org/abs/2305.06591)"
 
-Object detection is powered by a **YOLO segmentation** model (replaceable with other detection methods if desired).
+Object detection is powered by a **YOLO segmentation** model (replaceable with other detection methods if desired).  
 Optimized for **ZED stereo cameras** and **Franka Emika Panda** arms.  
 Provides an end-to-end chain: **perception → grasp planning → execution**.
 
@@ -127,7 +127,7 @@ flowchart LR
 
 ## Controlling the Robot
 
-This repo includes a [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) demo for grasp execution with this [Cartesian Impedance Controller](https://github.com/MrGerencser/cartesian_impedance_control).       
+This repo includes a [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) demo script for grasp execution with this [Cartesian Impedance Controller](https://github.com/MrGerencser/cartesian_impedance_control).       
 [grasp_executor.py](superquadric_grasp_system/grasp_executor.py) doesn't include object avoidance or other safety filters.
 
 **Example workflow:**

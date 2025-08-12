@@ -80,7 +80,7 @@ flowchart LR
   
 5. **Build**
    ```bash
-   colcon build --packages-select superquadric_grasp_system
+   colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
    source install/setup.bash
    ```
 
@@ -101,7 +101,7 @@ flowchart LR
 3. **Rebuild after config/model changes**
    ```bash
    cd ~/franka_ros2_ws
-   colcon build --packages-select superquadric_grasp_system
+   colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
    source install/setup.bash
    ```
 

@@ -27,6 +27,8 @@ flowchart LR
 
 **Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (ZED SDK 5.0.5) · Franka Panda Emika
 
+💡 See also: For an alternative approach to 6D pose and grasp estimation, check out [sam6d_wrapper](https://github.com/MrGerencser/sam6d_wrapper)
+
 ---
 
 ## Table of Contents

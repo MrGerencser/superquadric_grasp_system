@@ -20,7 +20,7 @@ class SuperquadricEstimator:
                 enable_best_grasps_visualization: bool = False,
                 enable_support_test_visualization: bool = False,
                 enable_collision_test_visualization: bool = False,
-                grasp_planning_enabled: bool = True):
+                sq_grasp_planning_enabled: bool = True):
         self.node = node
         self.logger = node.get_logger()
         
@@ -39,8 +39,8 @@ class SuperquadricEstimator:
         self.enable_collision_test_visualization = enable_collision_test_visualization
         
         # Grasp planning flag
-        self.grasp_planning_enabled = grasp_planning_enabled
-        
+        self.sq_grasp_planning_enabled = sq_grasp_planning_enabled
+
         # Initialize visualizer if needed
         self.visualizer = None
         if self._needs_visualization():
@@ -163,7 +163,6 @@ class SuperquadricEstimator:
                         scale=sq_params['scale'],
                         euler=sq_params['euler'],
                         translation=sq_params['translation'],
-                        max_grasps=5,
                         visualize_support_test=self.enable_support_test_visualization,
                         visualize_collision_test=self.enable_collision_test_visualization
                     )
@@ -242,7 +241,7 @@ class SuperquadricEstimator:
                         grasp_poses=all_grasp_poses,
                         gripper_colors=[(1, 0, 0)] * len(all_grasp_poses),
                         show_sweep_volume=False,
-                        window_name=f"All Grasps: {self.class_names.get(class_id, f'Object_{class_id}')}"
+                        window_name=f"All Valid Grasps: {self.class_names.get(class_id, f'Object_{class_id}')}"
                     )
                 except Exception as viz_error:
                     self.logger.error(f"All valid grasp visualization failed: {viz_error}")
@@ -286,7 +285,7 @@ class SuperquadricEstimator:
         
     def is_ready(self) -> bool:
         """Check if superquadric estimator is ready"""
-        if not self.grasp_planning_enabled:
+        if not self.sq_grasp_planning_enabled:
             self.logger.warning("Grasp planning is disabled, skipping readiness check for planner.")
             return False
         
@@ -296,7 +295,7 @@ class SuperquadricEstimator:
             return False
         
         # Check if grasp planner is ready (if grasp planning is enabled)
-        if self.grasp_planning_enabled and not self.grasp_planner:
+        if self.sq_grasp_planning_enabled and not self.grasp_planner:
             self.logger.error("Grasp planner is not initialized.")
             return False
         

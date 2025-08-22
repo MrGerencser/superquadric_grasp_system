@@ -4,7 +4,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool
-from franka_msgs.action import Grasp, Move
+from franka_msgs.action import Grasp, Move, Homing
 from sensor_msgs.msg import JointState
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -165,8 +165,8 @@ class GraspExecutor(Node):
     def _on_current_pose_received(self, msg):
         """Update current robot end-effector pose"""
         self.current_robot_pose = msg
-        
-    def _movement_completed(self, timeout_seconds):
+
+    def _movement_completed(self, position_tolerance=0.04, timeout_seconds=8.0):
         """
         Check if movement to the target pose is completed or failed.
 
@@ -180,7 +180,7 @@ class GraspExecutor(Node):
         if self._poses_are_close(
             self.current_robot_pose, 
             self.target_pose,
-            position_tolerance=0.04,
+            position_tolerance=position_tolerance,
             orientation_tolerance=0.2
         ):
             return 'completed'
@@ -251,6 +251,10 @@ class GraspExecutor(Node):
     
     def _setup_gripper(self):
         """Setup gripper action clients"""
+        self.homing_client = ActionClient(
+            self, Homing, '/fr3_gripper/homing', 
+            callback_group=self.callback_group
+        )
         self.move_client = ActionClient(
             self, Move, '/fr3_gripper/move', 
             callback_group=self.callback_group
@@ -282,12 +286,10 @@ class GraspExecutor(Node):
                 raise SystemExit('ROS shutdown while waiting for servers')
     
     def _home_gripper(self):
-        """Home the gripper by opening it to max width"""
-        self.get_logger().info(f"Homing gripper by opening to {self.config['gripper']['max_width']*1000:.0f}mm")
-        goal = Move.Goal()
-        goal.width = self.config['gripper']['max_width']
-        goal.speed = self.config['gripper']['speed']
-        self.move_client.send_goal_async(goal)
+        """Home the gripper"""  
+        self.get_logger().info("Homing gripper...")
+        goal = Homing.Goal()
+        self.homing_client.send_goal_async(goal)
     
     def _create_home_pose(self):
         """Create home pose"""
@@ -435,9 +437,9 @@ class GraspExecutor(Node):
         """Check if grasp was successful"""
         if self.gripper_width is None:
             raise GraspFailureException("Cannot verify grasp: no gripper data")
-        
-        grasp_failure_threshold = 0.005  # 5mm
-        
+
+        grasp_failure_threshold = 0.002  # 2mm
+
         self.get_logger().info(f"Gripper width: {self.gripper_width*1000:.1f}mm")
         
         if self.gripper_width <= grasp_failure_threshold:
@@ -579,7 +581,7 @@ class GraspExecutor(Node):
             self.current_future = True
         
         # Completion check
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.04, timeout_seconds=8.0)
         if status ==  'completed':
             self._transition_to_state(GraspState.OPENING_GRIPPER)
         elif status == 'failed':
@@ -603,7 +605,7 @@ class GraspExecutor(Node):
             self._move_to_pose(pre_grasp_pose, "Moving to pre-grasp position", timeout=8.0)
             self.current_future = True
         
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.04, timeout_seconds=8.0)
         if status == 'completed':
             self._transition_to_state(GraspState.MOVING_TO_GRASP)
         elif status == 'failed':
@@ -615,7 +617,7 @@ class GraspExecutor(Node):
         if self.current_future is None:
             self.current_future = self._move_to_pose(self.active_grasp_pose, "Moving to grasp position", timeout=8.0)
 
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.015, timeout_seconds=8.0)
         if status == 'completed':
             self._transition_to_state(GraspState.CLOSING_GRIPPER)
         elif status == 'failed':
@@ -647,7 +649,7 @@ class GraspExecutor(Node):
             lift_pose = self._create_offset_pose(self.active_grasp_pose, self.config['offsets']['lift'])
             self.current_future = self._move_to_pose(lift_pose, "Lifting object", timeout=8.0)
 
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.015, timeout_seconds=8.0)
         if status == 'completed':
             self._transition_to_state(GraspState.RETURNING_TO_HOME)
         elif status == 'failed':
@@ -659,7 +661,7 @@ class GraspExecutor(Node):
         if self.current_future is None:
             self.current_future = self._move_to_pose(self.home_pose, "Returning to home with object", timeout=8.0)
 
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.04, timeout_seconds=8.0)
         if status == 'completed':
             self._transition_to_state(GraspState.MOVING_TO_DROP_SAFE)
         elif status == 'failed':
@@ -672,7 +674,7 @@ class GraspExecutor(Node):
             drop_safe_pose = self._create_offset_pose(self.drop_pose, self.config['offsets']['drop_safe'])
             self.current_future = self._move_to_pose(drop_safe_pose, "Moving to drop safe position", timeout=8.0)
 
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.04, timeout_seconds=8.0)
         if status == 'completed':
             self._transition_to_state(GraspState.MOVING_TO_DROP)
         elif status == 'failed':
@@ -684,7 +686,7 @@ class GraspExecutor(Node):
         if self.current_future is None:
             self.current_future = self._move_to_pose(self.drop_pose, "Moving to drop position", timeout=8.0)
 
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.04, timeout_seconds=8.0)
         if status == 'completed':
             self._transition_to_state(GraspState.RELEASING_OBJECT)
         elif status == 'failed':
@@ -705,7 +707,7 @@ class GraspExecutor(Node):
             drop_approach_pose = self._create_offset_pose(self.drop_pose, self.config['offsets']['drop_approach'])
             self.current_future = self._move_to_pose(drop_approach_pose, "Retreating from drop position", timeout=8.0)
 
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.04, timeout_seconds=8.0)
         if status == 'completed':
             self._transition_to_state(GraspState.FINAL_HOME)
         elif status == 'failed':
@@ -717,7 +719,7 @@ class GraspExecutor(Node):
         if self.current_future is None:
             self.current_future = self._move_to_pose(self.home_pose, "Returning to final home position", timeout=8.0)
 
-        status = self._movement_completed(8.0)
+        status = self._movement_completed(position_tolerance=0.04, timeout_seconds=8.0)
         if status == 'completed':
             # Sequence completed successfully
             self._publish_status(self.grasp_successful)

@@ -110,11 +110,12 @@ class ConfigManager:
             self.icp_distance_threshold = icp['distance_threshold']
             self.icp_max_iterations = icp['max_iterations']
             self.icp_convergence_threshold = icp['convergence_threshold']
+            self.align_to_world_frame = icp.get('align_to_world_frame', False)
             self.visualize_icp_alignment = icp['visualize_icp_alignment']
             self.visualize_grasp_poses = icp['visualize_grasp_poses']
             
             # ICP grasp planning
-            self.grasp_planning_enabled = icp.get('grasp_planning_enabled', True)
+            self.icp_grasp_planning_enabled = icp.get('icp_grasp_planning_enabled', True)
             self.max_grasp_candidates = icp.get('max_grasp_candidates', 100)
             
             # Set default values for superquadric properties (in case they're accessed)
@@ -142,8 +143,8 @@ class ConfigManager:
             self.gripper_max_opening = sq['gripper_max_opening']
             
             # Superquadric grasp planning
-            self.grasp_planning_enabled = sq.get('grasp_planning_enabled', True)
-            
+            self.sq_grasp_planning_enabled = sq.get('sq_grasp_planning_enabled', True)
+
             # Superquadric visualizations
             self.enable_superquadric_fit_visualization = sq['enable_superquadric_fit_visualization']
             self.enable_all_valid_grasps_visualization = sq['enable_all_valid_grasps_visualization']

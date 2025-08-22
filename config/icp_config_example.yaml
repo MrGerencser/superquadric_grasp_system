@@ -6,11 +6,11 @@ perception:
   
   # Web visualization parameters
   web_interface:
-    enabled: true
+    enabled: false
     port: 8080
     web_dir: "/tmp/grasp_system_live"
     update_rate: 15.0  # FPS for web updates
-    image_quality: 85  # JPEG quality (1-100)
+    image_quality: 100  # JPEG quality (1-100)
   
   # Camera parameters
   camera:
@@ -22,13 +22,21 @@ perception:
   # Detection parameters
   detection:
     method: "yolo"  # yolo
-    yolo_model_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/red_objects.pt"
-    confidence_threshold: 0.1
-    classes: [0, 1, 2]
+    yolo_model_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/all_objects_new_again.pt"
+    confidence_threshold: 0.5
+    classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     class_names:
-      0: "bleach cleanser"
-      1: "cup" 
-      2: "power drill"
+      0: "allergenfreejarrodophilus"
+      1: "banana" 
+      2: "bleach_cleanser"
+      3: "cup"
+      4: "master_chef_can"
+      5: "milk_tetrapak"
+      6: "mustard_bottle"
+      7: "power_drill"
+      8: "sugar_box"
+      9: "tennisball"
+
   
   # Point cloud parameters
   point_cloud:
@@ -59,31 +67,31 @@ perception:
     
     # ==== ICP-SPECIFIC PARAMETERS ====
     icp:
-      model_folder_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/models"
+      model_folder_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/object_models"
       distance_threshold: 0.03
       max_iterations: 50
       convergence_threshold: 1e-6
-      
+      align_to_world_frame: false # Align z axis to world frame (could be useful for cubes for example)
+
       ## Grasp planning for ICP
-      grasp_planning_enabled: true
-      max_grasp_candidates: 3
+      icp_grasp_planning_enabled: true
+      max_grasp_candidates: 100
       
       # ICP-specific visualization
       visualize_icp_alignment: true
-      visualize_grasp_poses: true
-    
+      visualize_grasp_poses: false
+
     # ==== SUPERQUADRIC-SPECIFIC PARAMETERS ====
     superquadric:
-      enabled: true
       
       # Fitting parameters
-      outlier_ratio: 0.99
-      use_kmeans_clustering: false
+      outlier_ratio: 0.999
+      use_kmeans_clustering: true
       max_iterations: 1000
       convergence_threshold: 1e-6
       
       # Grasp planning
-      grasp_planning_enabled: true
+      sq_grasp_planning_enabled: true
       gripper_jaw_length: 0.037
       gripper_max_opening: 0.08
       

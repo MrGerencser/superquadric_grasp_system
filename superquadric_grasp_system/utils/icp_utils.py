@@ -284,7 +284,7 @@ class ICPPoseEstimator:
                 "rmse": float("inf"),
                 "transformation": None,
                 "config": "",
-                "reference": None,
+                "referencgit fetch origine": None,
                 "threshold": self.distance_threshold
             }
             

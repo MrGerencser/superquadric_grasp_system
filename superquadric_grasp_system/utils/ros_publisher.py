@@ -43,6 +43,19 @@ class ROSPublisher:
     def publish_pose(self, pose_matrix, class_id, object_id):
         """Publish pose and transform messages"""
         try:
+            # Log Euler angles (roll, pitch, yaw) for debugging
+            try:
+                rot_mat = np.asarray(pose_matrix)[:3, :3]
+                r = R_simple.from_matrix(rot_mat)
+                euler_deg = r.as_euler('xyz', degrees=True)
+                self.logger.info(
+                    f"Publishing pose Euler (deg): roll={euler_deg[0]:.2f}, "
+                    f"pitch={euler_deg[1]:.2f}, yaw={euler_deg[2]:.2f}"
+                )
+            except Exception as _e:
+                # non-fatal: continue publishing even if Euler conversion fails
+                self.logger.debug(f"Failed to compute Euler angles: {_e}")
+            
             if self.publish_poses and self.pose_publisher:
                 pose_msg = self._matrix_to_pose_stamped(pose_matrix, class_id, object_id)
                 self.pose_publisher.publish(pose_msg)

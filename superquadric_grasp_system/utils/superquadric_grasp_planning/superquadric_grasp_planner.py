@@ -32,7 +32,7 @@ class SuperquadricGraspPlanner:
     def principal_axis_sweeps(self, S: Superquadric, G: Gripper, step_deg=10):
         candidate_R = []
 
-        self.logger.debug(f"This implementation assumes gripper closing line λ is along Y-axis (not X-axis as in original paper)")
+        self.logger.debug(f"This implementation assumes gripper closing line λ is along Y-axis (not X-axis as in original)")
         self.logger.debug(f"Principal axes in world frame:")
         self.logger.debug(f"  λ_x: {S.axes_world[:, 0]}")
         self.logger.debug(f"  λ_y: {S.axes_world[:, 1]}")
@@ -81,149 +81,152 @@ class SuperquadricGraspPlanner:
 
     def extra_sweeps_special_shapes(self, S: Superquadric, base_R_list, G: Gripper):
         """
-        For prism-like (ε1→0) or cuboid-like (ε2→0): slide gripper along SQ-local axes in 15mm grid.
-        For cylinder-like (ε1→0, ε2=1, ax=ay): rotate about λ_z in π/8 increments.
-        
-        NOTE: This implementation assumes gripper closing line λ is along Y-axis (not X-axis as in original paper)
+        Add extra grasps based on superquadric shape:
+        1) ε1 → 0 (prism): slide gripper along z-axis in 15mm steps
+        2) ε2 → 0 (rectangular cross-section): slide along perpendicular axis in 15mm steps  
+        3) ε2 = 1 and ax = ay (circular cross-section): rotate around z-axis in π/8 steps
         """
         R_list_full = list(base_R_list)
         poses_offsets = []
 
-        # Heuristic thresholds
-        prism_like   = (S.ε1 < 0.3)  # ε1 → 0
-        cuboid_like  = (S.ε2 < 0.3)  # ε2 → 0
-        
-        # cylinder condition (most specific, check first)
-        cylinder_like = (S.ε1 < 0.3) and (abs(S.ε2 - 1.0) < 0.1) and (abs(S.ax - S.ay) < 0.01)
+        # Thresholds
+        prism_like = (S.ε1 < 0.1)          # ε1 → 0 (more restrictive)
+        rectangular_like = (S.ε2 < 0.1)    # ε2 → 0 (more restrictive)
+        circular_like = (abs(S.ε2 - 1.0) < 0.05) and (abs(S.ax - S.ay) < 0.005)  # ε2 = 1, ax = ay
 
         self.logger.debug(f"Shape analysis: ε1={S.ε1:.3f}, ε2={S.ε2:.3f}, ax={S.ax:.3f}, ay={S.ay:.3f}")
-        self.logger.debug(f"prism_like={prism_like}, cuboid_like={cuboid_like}, cylinder_like={cylinder_like}")
-        self.logger.debug(f"Gripper closing line λ is along: {G.lambda_local} (Y-axis)")
+        self.logger.debug(f"prism_like={prism_like}, rectangular_like={rectangular_like}, circular_like={circular_like}")
 
-        # SQ-local axes in world
+        # Get SQ-local axes in world coordinates
         λx_w, λy_w, λz_w = S.axes_world[:, 0], S.axes_world[:, 1], S.axes_world[:, 2]
 
-        # Grid step (15 mm)
+        # 15mm step size
         step = 0.015
 
-        def linspace_clamped(extent):
+        def get_limited_steps(extent, max_steps=5):
+            """Limit the number of steps to prevent explosion of candidates"""
             if extent < 1e-6:
                 return np.array([0.0])
-            n = int(np.floor(extent / step))
-            vals = np.arange(-n, n+1) * step
-            return vals
+            n = min(int(np.floor(extent / step)), max_steps)  # Limit to max_steps
+            if n == 0:
+                return np.array([0.0])
+            return np.arange(-n, n+1) * step
 
-        # Handle cylinder case FIRST (most specific)
-        if cylinder_like:
-            self.logger.debug(f"[INFO] Detected cylinder shape - adding π/8 rotations around z-axis")
-
-            # For cylinders: only rotate around z-axis (no translation)
-            seen = set()
+        # CASE 1: Cylinder (most specific, check first)
+        if prism_like and circular_like:
+            self.logger.debug("Detected CYLINDER: adding π/8 rotations around z-axis")
+            
+            # Only add rotations around z-axis, no translations
             axis_world = λz_w
             R_align = rotation_from_u_to_v(G.lambda_local, axis_world)
-            
-            # π/8 = 22.5 degrees intervals as per original paper
-            for extra_angle in np.arange(0, 360, 22.5):
-                R_extra = R_simple.from_rotvec(axis_world * (extra_angle * DEG)).as_matrix()
+
+            # π/8 = 22.5 degrees
+            angle_step = np.pi / 8  # 22.5 degrees
+            for i in range(1, 16):  # Skip 0 (already in base set), add 15 more = 16 total
+                extra_angle = i * angle_step
+                R_extra = R_simple.from_rotvec(axis_world * extra_angle).as_matrix()
                 R_new = R_extra @ R_align
-                key = tuple(np.round(R_new, 6).ravel())
-                if key not in seen:
-                    seen.add(key)
-                    R_list_full.append(R_new)
-                    poses_offsets.append((R_new, np.zeros(3)))
+                R_list_full.append(R_new)
+                poses_offsets.append((R_new, np.zeros(3)))  # No translation offset
 
-            self.logger.debug(f"Added {len(poses_offsets)} cylinder rotations")
+            self.logger.debug(f"Added {15} cylinder rotations")
 
-        # Handle prism case (ε1 → 0) - ADJUSTED FOR Y-AXIS CLOSING LINE
-        elif prism_like and not cuboid_like:
-            self.logger.debug(f"Detected prism shape - adding translations per original paper method (adapted for Y-axis)")
-
-            # For prism: move along z-axis for λx and λy alignments
-            # move along x,y for λz alignment
-            z_vals = linspace_clamped(S.az)
-            x_vals = linspace_clamped(S.ax) 
-            y_vals = linspace_clamped(S.ay)
+        # CASE 2: Prism (ε1 → 0, but not cylinder)
+        elif prism_like and not circular_like:
+            self.logger.debug("Detected PRISM: adding z-axis translations for λx/λy, xy-grid for λz")
             
-            # Identify which base rotations correspond to which axis alignments
+            z_steps = get_limited_steps(S.az)
+            x_steps = get_limited_steps(S.ax)
+            y_steps = get_limited_steps(S.ay)
+            
             for Rg in base_R_list:
-                # Check which axis the gripper closing direction (Y-axis) is most aligned with
-                closing_world = Rg @ G.lambda_local  # G.lambda_local = [0, 1, 0]
+                closing_world = Rg @ G.lambda_local
                 
-                # Most aligned axis determines translation directions
+                # Determine which axis the gripper is most aligned with
                 alignments = [abs(np.dot(closing_world, λx_w)), 
                             abs(np.dot(closing_world, λy_w)), 
                             abs(np.dot(closing_world, λz_w))]
                 max_alignment_idx = np.argmax(alignments)
                 
-                if max_alignment_idx == 0:  # Closing line aligned with superquadric λx
-                    # when λ aligned with λx, move along z-axis
-                    for dz in z_vals:
-                        if dz != 0:
+                if max_alignment_idx in [0, 1]:  # Aligned with λx or λy
+                    # Move along z-axis only
+                    for dz in z_steps:
+                        if abs(dz) > 1e-6:  # Skip zero offset
                             Δt_world = dz * λz_w
                             poses_offsets.append((Rg, Δt_world))
-                elif max_alignment_idx == 1:  # Closing line aligned with superquadric λy
-                    # when λ aligned with λy, move along z-axis
-                    for dz in z_vals:
-                        if dz != 0:
-                            Δt_world = dz * λz_w
-                            poses_offsets.append((Rg, Δt_world))
-                else:  # Closing line aligned with superquadric λz
-                    # when λ aligned with λz, move along x,y grid on base
-                    for dx in x_vals:
-                        for dy in y_vals:
-                            if dx != 0 or dy != 0:
+                            
+                else:  # Aligned with λz
+                    # Move on xy-grid
+                    for dx in x_steps:
+                        for dy in y_steps:
+                            if abs(dx) > 1e-6 or abs(dy) > 1e-6:  # Skip zero offset
                                 Δt_world = dx * λx_w + dy * λy_w
                                 poses_offsets.append((Rg, Δt_world))
 
             self.logger.debug(f"Added {len(poses_offsets)} prism translations")
 
-        # Handle cuboid case (ε2 → 0) - ADJUSTED FOR Y-AXIS CLOSING LINE
-        elif cuboid_like and not prism_like:
-            self.logger.debug(f"Detected cuboid shape - adding translations per original paper method (adapted for Y-axis)")
-
-            x_vals = linspace_clamped(S.ax)
-            y_vals = linspace_clamped(S.ay)
+        # CASE 3: Rectangular cross-section (ε2 → 0, but not prism)
+        elif rectangular_like and not prism_like:
+            self.logger.debug("Detected RECTANGULAR: adding perpendicular translations")
+            
+            x_steps = get_limited_steps(S.ax)
+            y_steps = get_limited_steps(S.ay)
             
             for Rg in base_R_list:
-                closing_world = Rg @ G.lambda_local  # G.lambda_local = [0, 1, 0]
+                closing_world = Rg @ G.lambda_local
                 
-                # Check alignment with x and y axes of superquadric
+                # Check alignment with x and y axes only
                 x_alignment = abs(np.dot(closing_world, λx_w))
                 y_alignment = abs(np.dot(closing_world, λy_w))
                 
-                if x_alignment > y_alignment:  # More aligned with superquadric λx
-                    # when λ aligned with λx, move along y-axis
-                    for dy in y_vals:
-                        if dy != 0:
+                if x_alignment > y_alignment:  # More aligned with λx
+                    # Move along y-axis (perpendicular)
+                    for dy in y_steps:
+                        if abs(dy) > 1e-6:
                             Δt_world = dy * λy_w
                             poses_offsets.append((Rg, Δt_world))
-                else:  # More aligned with superquadric λy
-                    # when λ aligned with λy, move along x-axis  
-                    for dx in x_vals:
-                        if dx != 0:
+                else:  # More aligned with λy
+                    # Move along x-axis (perpendicular)
+                    for dx in x_steps:
+                        if abs(dx) > 1e-6:
                             Δt_world = dx * λx_w
                             poses_offsets.append((Rg, Δt_world))
 
-            self.logger.debug(f"Added {len(poses_offsets)} cuboid translations")
+            self.logger.debug(f"Added {len(poses_offsets)} rectangular translations")
 
-        # Handle combined case (both prism and cuboid)
-        elif prism_like and cuboid_like:
-            self.logger.debug(f"Detected combined prism+cuboid - using general approach")
-            # Keep your existing general implementation for this case
-            z_vals = linspace_clamped(S.az)
-            x_vals = linspace_clamped(S.ax) 
-            y_vals = linspace_clamped(S.ay)
+        # CASE 4: Combined prism + rectangular (cuboid)
+        elif prism_like and rectangular_like and not circular_like:
+            self.logger.debug("Detected CUBOID: using combined approach with limits")
+            
+            # Very limited grid to prevent explosion
+            z_steps = get_limited_steps(S.az, max_steps=2)  # Max ±2 steps
+            x_steps = get_limited_steps(S.ax, max_steps=2)
+            y_steps = get_limited_steps(S.ay, max_steps=2)
 
             for Rg in base_R_list:
-                for dz in z_vals:
-                    for dx in x_vals:
-                        for dy in y_vals:
-                            if dx == 0 and dy == 0 and dz == 0:
-                                continue  # Skip origin 
-                            Δt_world = dx * λx_w + dy * λy_w + dz * λz_w
-                            poses_offsets.append((Rg, Δt_world))
+                for dz in z_steps:
+                    for dx in x_steps:
+                        for dy in y_steps:
+                            if abs(dx) > 1e-6 or abs(dy) > 1e-6 or abs(dz) > 1e-6:
+                                Δt_world = dx * λx_w + dy * λy_w + dz * λz_w
+                                poses_offsets.append((Rg, Δt_world))
+                                
+                                # Hard limit to prevent explosion
+                                if len(poses_offsets) > 100:
+                                    break
+                        if len(poses_offsets) > 100:
+                            break
+                    if len(poses_offsets) > 100:
+                        break
 
-            self.logger.debug(f"Added {len(poses_offsets)} combined translations")
+            self.logger.debug(f"Added {len(poses_offsets)} cuboid translations (limited)")
+
+        else:
+            self.logger.debug("Standard shape: no extra sweeps needed")
+
+        # Log final count
+        total_candidates = len(R_list_full) + len(poses_offsets)
+        self.logger.debug(f"Extra sweeps complete: {len(poses_offsets)} offset poses, {total_candidates} total candidates")
 
         return R_list_full, poses_offsets
 
@@ -295,23 +298,9 @@ class SuperquadricGraspPlanner:
             self.logger.error(f"Error getting all grasps: {e}")
             return []
 
-    def plan_filtered_grasps(self,
-                    point_cloud_path: str,
-                    shape: np.ndarray,
-                    scale: np.ndarray,
-                    euler: np.ndarray,
-                    translation: np.ndarray,
-                    *,
-                    max_grasps: int = 5,
-                    visualize_support_test: bool = False,
-                    visualize_collision_test: bool = False):
-        """
-        Generate and score grasp poses around a superquadric model.
-
-        Returns
-        -------
-        list[dict]  each with {'pose','score','rotation','translation'}
-        """
+    def plan_filtered_grasps(self, point_cloud_path, shape, scale, euler, translation,
+                        visualize_support_test=False, visualize_collision_test=False):
+        """Plan grasps with support and collision filtering - returns ALL valid grasps"""
 
         # ----------------------- 1. I/O -----------------------
         pcd = o3d.io.read_point_cloud(point_cloud_path)
@@ -370,11 +359,10 @@ class SuperquadricGraspPlanner:
             scored.append((score, Rg, tg))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        best_k = scored[:max_grasps]
 
-        # ---------------------- 7. package ----------------------
+        # ---------------------- 7. package all valid grasps ----------------------
         results = []
-        for score, Rg, tg in best_k:
+        for score, Rg, tg in scored:
             T         = np.eye(4)
             T[:3,:3]  = Rg
             T[:3, 3]  = tg
@@ -382,6 +370,7 @@ class SuperquadricGraspPlanner:
                                 score=score,
                                 rotation=Rg,
                                 translation=tg))
+            
         return results
 
     def select_best_grasp_with_criteria(self, grasp_data_list, point_cloud=None):
@@ -582,4 +571,3 @@ class SuperquadricGraspPlanner:
             points.append(crossbar_point)
         
         return points
-    

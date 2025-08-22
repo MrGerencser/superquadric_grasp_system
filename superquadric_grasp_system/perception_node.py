@@ -91,7 +91,9 @@ class PerceptionNode(Node):
                 voxel_downsample_size=self.config.voxel_downsample_size,
                 visualize_alignment=self.config.visualize_icp_alignment,
                 visualize_grasps=self.config.visualize_grasp_poses,
-                max_grasp_candidates=getattr(self.config, 'max_grasp_candidates', 3)
+                max_grasp_candidates=getattr(self.config, 'max_grasp_candidates', 3),
+                icp_grasp_planning_enabled=getattr(self.config, 'icp_grasp_planning_enabled', True),
+                align_to_world_frame=getattr(self.config, 'align_to_world_frame', False)
             )
         else:
             self.pose_estimator = SuperquadricEstimator(
@@ -109,6 +111,7 @@ class PerceptionNode(Node):
                 enable_best_grasps_visualization=self.config.enable_best_grasps_visualization,
                 enable_support_test_visualization=self.config.enable_support_test_visualization,
                 enable_collision_test_visualization=self.config.enable_collision_test_visualization,
+                sq_grasp_planning_enabled=getattr(self.config, 'sq_grasp_planning_enabled', True)
             )
             
         managers = [

@@ -6,11 +6,11 @@ perception:
   
   # Web visualization parameters
   web_interface:
-    enabled: false
+    enabled: true
     port: 8080
     web_dir: "/tmp/grasp_system_live"
     update_rate: 15.0  # FPS for web updates
-    image_quality: 85  # JPEG quality (1-100)
+    image_quality: 100  # JPEG quality (1-100)
   
   # Camera parameters
   camera:
@@ -58,8 +58,8 @@ perception:
       voxel_downsample_size: 0.002
       
       # Shared visualization (works for both ICP and superquadric)
-      visualize_fused_workspace: false
-      enable_detected_object_clouds_visualization: false
+      visualize_fused_workspace: true
+      enable_detected_object_clouds_visualization: true
     
       # Publishing options
       publish_poses: true
@@ -67,38 +67,39 @@ perception:
     
     # ==== ICP-SPECIFIC PARAMETERS ====
     icp:
-      model_folder_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/models"
+      model_folder_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/object_models"
       distance_threshold: 0.03
       max_iterations: 50
       convergence_threshold: 1e-6
-      
+      align_to_world_frame: true # Align z axis to world frame (could be useful for cubes for example)
+
       ## Grasp planning for ICP
-      grasp_planning_enabled: false
+      icp_grasp_planning_enabled: false
       max_grasp_candidates: 100
       
       # ICP-specific visualization
       visualize_icp_alignment: true
-      visualize_grasp_poses: true
+      visualize_grasp_poses: false
 
     # ==== SUPERQUADRIC-SPECIFIC PARAMETERS ====
     superquadric:
       
       # Fitting parameters
       outlier_ratio: 0.999
-      use_kmeans_clustering: true
+      use_kmeans_clustering: true # enable k-means clustering / if false: k = 1
       max_iterations: 1000
       convergence_threshold: 1e-6
       
       # Grasp planning
-      grasp_planning_enabled: true
-      gripper_jaw_length: 0.037
+      sq_grasp_planning_enabled: true
+      gripper_jaw_length: 0.045 # using slightly larger value than 0.037 to be less strict in filtering candidates
       gripper_max_opening: 0.08
       
       # Superquadric-specific visualization
       enable_superquadric_fit_visualization: true
       enable_all_valid_grasps_visualization: true
       enable_best_grasps_visualization: true
-      enable_support_test_visualization: true
-      enable_collision_test_visualization: true
+      enable_support_test_visualization: false
+      enable_collision_test_visualization: false
 
 

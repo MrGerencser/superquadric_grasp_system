@@ -6,7 +6,7 @@ perception:
   
   # Web visualization parameters
   web_interface:
-    enabled: false
+    enabled: true
     port: 8080
     web_dir: "/tmp/grasp_system_live"
     update_rate: 15.0  # FPS for web updates
@@ -22,7 +22,7 @@ perception:
   # Detection parameters
   detection:
     method: "yolo"  # yolo
-    yolo_model_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/all_objects.pt"
+    yolo_model_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/yolo/all_objects.pt"
     confidence_threshold: 0.5
     classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     class_names:
@@ -46,10 +46,6 @@ perception:
     require_both_cameras: true
     publish_point_clouds: false
 
-  # Log benchmark
-  log_benchmark:
-    enabled: true
-
   # Pose estimation configuration
   pose_estimation:
     method: "superquadric"  # "icp" or "superquadric"
@@ -62,7 +58,7 @@ perception:
       voxel_downsample_size: 0.002
       
       # Shared visualization (works for both ICP and superquadric)
-      visualize_fused_workspace: true
+      visualize_fused_workspace: true # useful to check if transform is correct
       enable_detected_object_clouds_visualization: true
     
       # Publishing options
@@ -71,7 +67,7 @@ perception:
     
     # ==== ICP-SPECIFIC PARAMETERS ====
     icp:
-      model_folder_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/object_models"
+      model_folder_path: "/home/chris/franka_ros2_ws/src/superquadric_grasp_system/superquadric_grasp_system/models/object_models/main_dataset"
       distance_threshold: 0.03
       max_iterations: 50
       convergence_threshold: 1e-6
@@ -83,7 +79,7 @@ perception:
       
       # ICP-specific visualization
       visualize_icp_alignment: true
-      visualize_grasp_poses: false
+      visualize_grasp_poses: true
 
     # ==== SUPERQUADRIC-SPECIFIC PARAMETERS ====
     superquadric:
@@ -103,7 +99,7 @@ perception:
       enable_superquadric_fit_visualization: true
       enable_all_valid_grasps_visualization: true
       enable_best_grasps_visualization: true
-      enable_support_test_visualization: false
-      enable_collision_test_visualization: false
+      enable_support_test_visualization: true
+      enable_collision_test_visualization: true
 
 

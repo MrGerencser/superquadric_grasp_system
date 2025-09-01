@@ -69,18 +69,26 @@ flowchart LR
    rosdep install --from-paths src --ignore-src -r -y
    ```
 
-3. **Download Finetuned YOLO models**
+3. **Install Hugging Face Hub** (required for downloading object models)
    ```bash
+   pip install --upgrade huggingface_hub
+   ```
+
+4. **Download Finetuned YOLO models**
+   ```bash
+   cd ~/franka_ros2_ws/src/superquadric_grasp_system
    python scripts/download_yolo_models.py   # or provide your own finetuned YOLO model
    ```
    
-4. **Download object models (required for ICP)**
+5. **Download object models (required for ICP)**
    ```bash
+   cd ~/franka_ros2_ws/src/superquadric_grasp_system
    python scripts/download_object_models.py   # or provide your own CAD files
    ```
   
-5. **Build**
+6. **Build**
    ```bash
+   cd ~/franka_ros2_ws
    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
    source install/setup.bash
    ```
@@ -94,9 +102,9 @@ flowchart LR
    Edit `config/perception_config.yaml`:
    ```yaml
    grasping_method: "icp"         # Options: "icp", "superquadric"
-   yolo_model_path: "models/yolov11seg.pt"
+   yolo_model_path: "models/yolov11seg.pt" # path to YOLO model
    voxel_size: 0.005
-   workspace_bounds: [-0.3, 0.3, -0.3, 0.3, 0.0, 0.4] #in robot frame
+   workspace_bounds: [-0.25, 0.75, -0.5, 0.5, -0.05, 2.0] #in robot frame
    ```
 
 3. **Rebuild after config/model changes**

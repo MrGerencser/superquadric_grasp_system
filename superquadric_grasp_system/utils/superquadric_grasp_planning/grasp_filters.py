@@ -354,14 +354,13 @@ def check_palm_collision(points, gripper_center, R_world, gripper):
     collisions = in_approach_region & within_palm_width & within_palm_height
     return collisions
 
-def score_grasp(R, t, S, Y, *,
-                d_th=0.05,           # coverage distance threshold
-                q_alpha=0.002,       # goodness-of-fit decay
-                q_gamma=0.5,         # curvature-flatness decay
-                q_delta=0.005,       # COM-distance decay
-                kdtree=None,
-                contact_pts=None,
-                superquadric_fn=None):
+def score_grasp(R, t, S, Y, closing_dir_local, *,
+                d_th=0.05,                  # coverage distance threshold
+                q_alpha=0.002,              # goodness-of-fit decay
+                q_gamma=0.5,                # curvature-flatness decay
+                q_delta=0.005,              # COM-distance decay
+                n_surface_samples=10000,
+                kdtree=None):  
     """
     Evaluate one grasp candidate.
 
@@ -372,7 +371,7 @@ def score_grasp(R, t, S, Y, *,
     S : (M,3) ndarray
         Dense, uniform samples on the recovered superquadric surface.
     Y : (N,3) ndarray
-        Object points associated with that superquadric.
+        Observed Object points associated with that superquadric.
     ...
 
     Returns
@@ -380,37 +379,81 @@ def score_grasp(R, t, S, Y, *,
     Overall score h = hα·hβ·hγ·hδ
     Individual components (hα, hβ, hγ, hδ).
     """
+    # Sample surface for coverage/goodness calculations
+    S_samples = sample_superquadric_surface(S, n_surface_samples)
 
     # ---------- Goodness of fit (hα) ----------
     if kdtree is None:
         kdtree = KDTree(Y)
-    d2, _ = kdtree.query(S, k=1)
+    d2, _ = kdtree.query(S_samples, k=1)
     alpha = d2.mean()
     h_alpha = np.exp(-(alpha**2) / q_alpha)
 
     # ---------- Coverage (hβ) ----------
     covered = (d2 <= d_th**2)
-    beta = covered.sum() / S.shape[0]
+    beta = covered.sum() / S_samples.shape[0]
     h_beta = beta**2
-
-    # ---------- Curvature flatness (hγ) ----------
-    if contact_pts is None:
-        contact_pts = np.repeat(t[None, :], 2, axis=0)   # trivial placeholder
-    def gauss_curv(p, eps=1e-4):
-        ring = p + np.vstack([np.eye(3), -np.eye(3)]) * eps
-        f = kdtree.query(ring)[0]
-        return np.abs(f.mean() - f.min())
-    gamma = np.mean([gauss_curv(p) for p in contact_pts])
+    
+    # ---- Curvature flatness (hγ) ----
+    gamma = endpoint_curvature(S, closing_dir_local)
     h_gamma = np.exp(-(gamma**2) / q_gamma)
 
     # ---------- COM distance (hδ) ----------
     com   = Y.mean(axis=0)
-    pg    = contact_pts.mean(axis=0)
+    pg    = t
     delta = np.linalg.norm(pg - com)
     h_delta = np.exp(-(delta**2) / q_delta)
 
     # ---------- Overall score ----------
     return h_alpha * h_beta * h_gamma * h_delta, (h_alpha, h_beta, h_gamma, h_delta)
+
+def endpoint_curvature(S, closing_dir_local):
+    """
+    Compute Gaussian curvature at superquadric axis endpoints.
+    
+    Parameters:
+    - S: Superquadric object with ax, ay, az, ε1, ε2 
+    - closing_dir_local: Grasp direction in superquadric local frame
+    
+    Returns:
+    - gamma: Average absolute Gaussian curvature at contact points
+    """
+    a, b, c = S.ax, S.ay, S.az
+    e1, e2 = S.ε1, S.ε2
+    
+    # Determine which axis we're grasping along
+    abs_dir = np.abs(closing_dir_local)
+    axis_idx = np.argmax(abs_dir)
+    
+    # Handle degenerate cases
+    if abs(e1) < 1e-12 or abs(e2) < 1e-12:
+        return 10.0  # Very sharp edge
+    
+    if axis_idx == 0:  # x-axis grasp, contact at (±a, 0, 0)
+        # At x-axis endpoints: (±a, 0, 0)
+        # Principal curvatures are k1 = (2/e2 - 1)/(b*e2), k2 = (2/e1 - 1)/(c*e1)
+        k1 = (2.0/e2 - 1.0) / (b * e2)
+        k2 = (2.0/e1 - 1.0) / (c * e1)
+        gamma = abs(k1 * k2)
+            
+    elif axis_idx == 1:  # y-axis grasp, contact at (0, ±b, 0)  
+        # At y-axis endpoints: (0, ±b, 0)
+        # Principal curvatures are k1 = (2/e2 - 1)/(a*e2), k2 = (2/e1 - 1)/(c*e1)
+        k1 = (2.0/e2 - 1.0) / (a * e2)
+        k2 = (2.0/e1 - 1.0) / (c * e1)
+        gamma = abs(k1 * k2)
+            
+    else:  # z-axis grasp, contact at (0, 0, ±c)
+        # At z-axis endpoints: (0, 0, ±c)
+        # Principal curvatures are k1 = (2/e1 - 1)/(a*e1), k2 = (2/e1 - 1)/(b*e1)
+        k1 = (2.0/e1 - 1.0) / (a * e1)
+        k2 = (2.0/e1 - 1.0) / (b * e1)
+        gamma = abs(k1 * k2)
+    
+    # Scale down to reasonable range
+    gamma = gamma * 0.005  # Adjust this scaling factor
+    return gamma
+
 
 def sample_superquadric_surface(S, n_samples=1000):
     """

@@ -67,7 +67,6 @@ class ICPEstimator:
             distance_threshold=distance_threshold,
             visualize=visualize_alignment,
             align_to_world_frame=align_to_world_frame,
-            icp_grasp_planning_enabled=icp_grasp_planning_enabled,
             logger=self.logger,
             class_names=self.class_names
         )

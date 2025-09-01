@@ -11,12 +11,14 @@ class ICPPoseEstimator:
     """ICP-based pose estimation utility class"""
     
     def __init__(self, model_folder_path: str, distance_threshold: float = 0.03, 
-                visualize: bool = False, logger=None, class_names: Optional[Dict[int, str]] = None):
+                visualize: bool = False, logger=None, align_to_world_frame: bool = False,
+                class_names: Optional[Dict[int, str]] = None):
         self.model_folder_path = model_folder_path
         self.distance_threshold = distance_threshold
         self.visualize = visualize
         self.logger = logger
-        
+        self.align_to_world_frame = align_to_world_frame
+
         # Reference models storage
         self.reference_models = {}
         self.processed_ref_points = {}
@@ -385,7 +387,10 @@ class ICPPoseEstimator:
                 if self.logger:
                     self.logger.warning(f"ICP failed for class {class_id}")
                 return None
-            
+
+            if self.align_to_world_frame:
+                best_result["transformation"] = self._align_to_world_frame(best_result["transformation"])
+
             # Success logging with status indicators
             if self.logger:
                 fitness_status = "GOOD" if best_result['fitness'] > 0.7 else "OK" if best_result['fitness'] > 0.4 else "POOR"
@@ -410,6 +415,121 @@ class ICPPoseEstimator:
         idx = np.argsort(eigenvalues)[::-1]
         return eigenvalues[idx], eigenvectors[:, idx]
     
+    def _align_to_world_frame(self, transformation: np.ndarray) -> np.ndarray:
+        """
+        Align the object's Z-axis to the world frame Z-axis while preserving position.
+        This is useful for objects like boxes/cylinders where you want consistent upright orientation.
+        """
+        if self.logger:
+            self.logger.debug("Aligning object Z-axis to world frame")
+        
+        try:
+            # Extract current position and rotation
+            position = transformation[:3, 3].copy()
+            rotation_matrix = transformation[:3, :3].copy()
+            
+            # World Z-axis (upward direction in robot frame)
+            world_z = np.array([0, 0, 1])
+            
+            # Object's current Z-axis (third column of rotation matrix)
+            object_z = rotation_matrix[:, 2]
+            
+            # Check if Z-axis is already aligned (within tolerance)
+            dot_product = np.dot(object_z, world_z)
+            angle_deg = np.degrees(np.arccos(np.clip(np.abs(dot_product), 0, 1)))
+            
+            if self.logger:
+                self.logger.debug(f"Z-axis alignment angle: {angle_deg:.1f}°")
+            
+            # If already well aligned (within 10 degrees), keep current orientation
+            if angle_deg < 10.0:
+                if self.logger:
+                    self.logger.debug("Z-axis already well aligned, keeping current orientation")
+                return transformation
+            
+            # Determine if we should flip Z-axis (choose the direction closer to world Z)
+            if dot_product < 0:
+                # Object Z is pointing downward, flip it
+                target_z = world_z
+                if self.logger:
+                    self.logger.debug("Flipping object Z-axis to point upward")
+            else:
+                # Object Z is pointing upward, keep it
+                target_z = world_z
+            
+            # Method 1: Project current X and Y axes onto the horizontal plane
+            # This preserves the object's "front" direction as much as possible
+            
+            # Current X and Y axes
+            object_x = rotation_matrix[:, 0]
+            object_y = rotation_matrix[:, 1]
+            
+            # Project X-axis onto horizontal plane (remove Z component)
+            projected_x = object_x.copy()
+            projected_x[2] = 0  # Remove Z component
+            
+            # Normalize projected X-axis
+            projected_x_norm = np.linalg.norm(projected_x)
+            if projected_x_norm > 1e-6:  # If X-axis wasn't purely vertical
+                new_x = projected_x / projected_x_norm
+            else:
+                # X-axis was vertical, choose an arbitrary horizontal direction
+                # Use the projection of Y-axis instead
+                projected_y = object_y.copy()
+                projected_y[2] = 0
+                projected_y_norm = np.linalg.norm(projected_y)
+                if projected_y_norm > 1e-6:
+                    new_x = projected_y / projected_y_norm
+                else:
+                    # Both X and Y were vertical (rare case), use world X
+                    new_x = np.array([1, 0, 0])
+                    if self.logger:
+                        self.logger.debug("Object was vertically oriented, using world X-axis")
+            
+            # Compute new Y-axis as Z cross X (right-hand rule)
+            new_z = target_z
+            new_y = np.cross(new_z, new_x)
+            new_y = new_y / np.linalg.norm(new_y)  # Normalize
+            
+            # Recompute X to ensure orthogonality (Y cross Z)
+            new_x = np.cross(new_y, new_z)
+            new_x = new_x / np.linalg.norm(new_x)
+            
+            # Construct new rotation matrix
+            aligned_rotation = np.column_stack([new_x, new_y, new_z])
+            
+            # Verify it's a proper rotation matrix
+            det = np.linalg.det(aligned_rotation)
+            if abs(det - 1.0) > 1e-6:
+                if self.logger:
+                    self.logger.warning(f"Aligned rotation matrix determinant: {det:.6f} (should be 1.0)")
+                # Use SVD to correct
+                U, _, Vt = np.linalg.svd(aligned_rotation)
+                aligned_rotation = U @ Vt
+                if np.linalg.det(aligned_rotation) < 0:
+                    aligned_rotation[:, -1] *= -1
+            
+            # Construct aligned transformation matrix
+            aligned_transformation = np.eye(4)
+            aligned_transformation[:3, :3] = aligned_rotation
+            aligned_transformation[:3, 3] = position  # Keep original position
+            
+            if self.logger:
+                original_z = object_z
+                final_z = aligned_rotation[:, 2]
+                final_angle = np.degrees(np.arccos(np.clip(np.dot(final_z, world_z), 0, 1)))
+                self.logger.debug(f"Z-axis alignment: {angle_deg:.1f}° -> {final_angle:.1f}°")
+                self.logger.debug(f"Original Z: [{original_z[0]:.3f}, {original_z[1]:.3f}, {original_z[2]:.3f}]")
+                self.logger.debug(f"Aligned Z:  [{final_z[0]:.3f}, {final_z[1]:.3f}, {final_z[2]:.3f}]")
+            
+            return aligned_transformation
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"World frame alignment failed: {e}")
+            # Return original transformation if alignment fails
+            return transformation
+
     def _visualize_icp_result(self, observed_cloud: o3d.geometry.PointCloud, 
                              reference_cloud: o3d.geometry.PointCloud, 
                              transformation: np.ndarray, class_id: int):

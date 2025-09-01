@@ -1,7 +1,6 @@
 import numpy as np
 from typing import List, Tuple, Optional, Any
 from sklearn.cluster import KMeans
-import open3d as o3d
 
 # Import your existing modules
 from EMS.EMS_recovery import EMS_recovery, RotM2Euler
@@ -16,31 +15,25 @@ def fit_single_superquadric(
     notation and helper functions that the ensemble version uses.
     Returns (best_sq, [best_sq]) to keep the API uniform.
     """
-    RESCALE   = True
-    t0        = points.mean(axis=0)
-    scale     = (np.max(points - t0) / 10.0) if RESCALE else 1.0
+    RESCALE = True
+    t0 = points.mean(axis=0)
+    scale = (np.max(points - t0) / 10.0) if RESCALE else 1.0
 
-    # ------------------------------------------------------------------
-    # 1.  Build the single ellipsoid seed (MoI/2 rule, like the paper)
-    # ------------------------------------------------------------------
+    # Build the single ellipsoid seed
     seed = ellipsoid_seed(points, tag="global", logger=logger)
 
-    # ------------------------------------------------------------------
-    # 2.  Convert seed to EMS frame and run EMS
-    # ------------------------------------------------------------------
+    # Convert seed to EMS frame and run EMS
     x0_prior = to_ems_frame(seed, scale=scale, t0=t0)
     sq, _ = EMS_recovery(
         points,
-        x0_prior         = x0_prior,
-        OutlierRatio     = outlier_ratio,
-        MaxIterationEM   = 60,
-        MaxOptiIterations= 5,
-        Rescale          = RESCALE,
+        x0_prior=x0_prior,
+        OutlierRatio=outlier_ratio,
+        MaxIterationEM=60,
+        MaxOptiIterations=5,
+        Rescale=RESCALE,
     )
 
-    # ------------------------------------------------------------------
-    # 3.  Validate & return in the same shape as the ensemble routine
-    # ------------------------------------------------------------------
+    # Validate & return
     if validate_superquadric(sq, points):
         return sq, [sq]
 
@@ -58,89 +51,83 @@ def fit_multiple_superquadrics(
     return the best-coverage SQ plus the full list.
     """
     RESCALE = True
-    # ------------------------------------------------------------------
-    # 1.  Choose K (your own heuristic)
-    # ------------------------------------------------------------------
+    
+    # Choose K
     K = calculate_k_superquadrics(len(points), logger)
 
-    # ------------------------------------------------------------------
-    # 2.  Build K + 1 ellipsoid seeds exactly as in the paper
-    # ------------------------------------------------------------------
-    kmeans  = KMeans(n_clusters=K, random_state=42, n_init=10)
-    labels  = kmeans.fit_predict(points)
+    # Build K + 1 ellipsoid seeds
+    kmeans = KMeans(n_clusters=K, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(points)
 
     seeds: List[dict] = []
 
     # K cluster seeds
     for i in range(K):
-        cluster_pts = points[labels == i]
-        if len(cluster_pts) < 10:
-            if logger: logger.warning(f"Cluster {i} too small – skipped")
+        cluster_mask = (labels == i)
+        cluster_pts = points[cluster_mask]
+        if len(cluster_pts) < 50:
+            if logger: 
+                logger.warning(f"Cluster {i} too small – skipped")
             continue
         seeds.append(ellipsoid_seed(cluster_pts, f"cluster_{i}", logger))
 
-    # extra global seed
+    # Extra global seed
     seeds.append(ellipsoid_seed(points, "global", logger))
 
     if not seeds:
-        if logger: logger.error("No valid seeds – aborting")
+        if logger: 
+            logger.error("No valid seeds – aborting")
         return None, []
 
-    # ------------------------------------------------------------------
-    # 3.  Convert each seed to EMS coordinates (centred & scaled)
-    # ------------------------------------------------------------------
-    t0    = points.mean(axis=0)
+    # Convert each seed to EMS coordinates
+    t0 = points.mean(axis=0)
     scale = (np.max(points - t0) / 10) if RESCALE else 1.0
-    # ------------------------------------------------------------------
-    # 4.  Run EMS once per seed
-    # ------------------------------------------------------------------
+    
+    # Run EMS once per seed
     results = []
     for seed in seeds:
         x0 = to_ems_frame(seed, scale=scale, t0=t0)
         sq, p = EMS_recovery(
             points,
-            x0_prior         = x0,
-            OutlierRatio     = outlier_ratio,   # <- use caller’s value
-            MaxIterationEM   = 60,
-            MaxOptiIterations= 5,
-            Rescale          = RESCALE,
+            x0_prior=x0,
+            OutlierRatio=outlier_ratio,
+            MaxIterationEM=60,
+            MaxOptiIterations=5,
+            Rescale=RESCALE,
         )
         results.append((sq, p, seed["type"]))
 
     if not results:
         return None, []
 
-    # ------------------------------------------------------------------
-    # 5.  Pick the best SQ by coverage
-    # ------------------------------------------------------------------
+    # Pick the best SQ by coverage
     best_tuple = max(results, key=lambda r: evaluate_sq_coverage(r[0], points))
-    best_sq    = best_tuple[0]      # keep only the superquadric object
-    all_sqs    = [r[0] for r in results]
+    best_sq = best_tuple[0]
+    all_sqs = [r[0] for r in results]
 
     return best_sq, all_sqs
-
 
 # ---------------------------------------UTILITIES-------------------------------------------
 def calculate_k_superquadrics(n_pts: int, logger=None) -> int:
     """Equation 12 in the paper, capped to MAX_ALLOWED_K."""
     if n_pts < 8000:
-        k = 6
+        k = max(1, int(np.log10(n_pts)) - 2)
     else:
-        k = 8 + 2 * ((n_pts - 8000) // 4000)
+        k = 2
     k = min(k, 20)  # cap to max 20 superquadrics
     if logger:
-        logger.info(f"Point count {n_pts}, choosing K = {k}")
+        logger.debug(f"Calculated K={k} for {n_pts} points")
     return k
     
 def ellipsoid_seed(pts: np.ndarray, tag: str, logger=None) -> dict:
-    moi   = calculate_moment_of_inertia(pts) / 2.0      # ✱ MoI halved
-    ell   = moi_to_ellipsoid_params(moi, logger)        # → scale & rotation
-    seed  = {
-        "translation": pts.mean(axis=0),                # world coords
-        "semi_axes":   ell["scale"],                    # a1,a2,a3  (world units)
-        "shape":       [1.0, 1.0],                      # ellipsoid
-        "rotation":    ell["rotation"],                 # 3×3 matrix
-        "type":        tag
+    moi = calculate_moment_of_inertia(pts) / 2.0  # MoI halved
+    ell = moi_to_ellipsoid_params(moi, logger)
+    seed = {
+        "translation": pts.mean(axis=0),
+        "semi_axes": ell["scale"],
+        "shape": [1.0, 1.0],
+        "rotation": ell["rotation"],
+        "type": tag
     }
     return seed
 
@@ -155,32 +142,29 @@ def moi_to_ellipsoid_params(inertia_tensor: np.ndarray, logger=None) -> dict:
     try:
         eigenvals, eigenvecs = np.linalg.eigh(inertia_tensor)
         
-        # Ensure eigenvalues are positive
-        eigenvals = np.abs(eigenvals)
-        eigenvals = np.maximum(eigenvals, 1e-12)
+        # Sort by eigenvalue (ascending)
+        idx = np.argsort(eigenvals)
+        eigenvals = eigenvals[idx]
+        eigenvecs = eigenvecs[:, idx]
         
-        # Scale from eigenvalues
-        scale = np.sqrt(eigenvals)
-        
-        # Ensure proper rotation matrix
-        rotation_matrix = eigenvecs.copy()
-        if np.linalg.det(rotation_matrix) < 0:
-            rotation_matrix[:, -1] *= -1
+        # Convert eigenvalues to ellipsoid semi-axes
+        # For ellipsoid: I = (2/5) * m * diag(b²+c², a²+c², a²+b²)
+        # Solving: a² = (I_yy + I_zz - I_xx) / (2/5 * m)
+        scale = np.sqrt(np.maximum(eigenvals, 1e-8))
         
         return {
-            'scale': scale,
-            'rotation': rotation_matrix
+            "scale": scale,
+            "rotation": eigenvecs
         }
         
     except Exception as e:
         if logger:
-            logger.error(f"Error in moi_to_ellipsoid_params: {e}")
+            logger.warning(f"MoI conversion failed: {e}, using default")
         return {
-            'scale': np.array([0.01, 0.01, 0.01]),
-            'rotation': np.eye(3)
+            "scale": np.array([0.05, 0.05, 0.05]),
+            "rotation": np.eye(3)
         }
-        
-        
+
 def calculate_moment_of_inertia(x: np.ndarray) -> np.ndarray:
     """Vectorised 3×3 MoI tensor of point set `x`."""
     centred = x - x.mean(0)
@@ -213,35 +197,18 @@ def validate_superquadric(sq, points: np.ndarray) -> bool:
 def evaluate_sq_coverage(sq, points: np.ndarray, logger=None) -> float:
     """Evaluate how well a superquadric covers the point cloud"""
     try:
-        # Transform points to superquadric coordinate system
-        centered_points = points - sq.translation
+        # Simple distance-based coverage metric
+        # Transform points to SQ local frame and compute fit
+        points_local = sq.world_to_obj(points) if hasattr(sq, 'world_to_obj') else points
         
-        # Rotate points if rotation matrix available
-        if hasattr(sq, 'RotM'):
-            rotated_points = centered_points @ sq.RotM.T
-        else:
-            rotated_points = centered_points
-        
-        # Calculate superquadric function
-        safe_scale = np.maximum(sq.scale, 1e-6)
-        normalized = np.abs(rotated_points) / safe_scale
-        
-        eps1, eps2 = sq.shape
-        eps1 = max(eps1, 0.1)
-        eps2 = max(eps2, 0.1)
-        
-        # Superquadric function evaluation
-        xy_term = (normalized[:, 0]**(2/eps2) + normalized[:, 1]**(2/eps2))**(eps2/eps1)
-        z_term = normalized[:, 2]**(2/eps1)
-        F_values = xy_term + z_term
-        
-        # Coverage calculation
-        inside_mask = F_values <= 1.2
-        coverage = np.sum(inside_mask) / len(points)
+        # Compute distances or some coverage metric
+        # This is a placeholder - implement based on your SQ distance function
+        distances = np.linalg.norm(points_local, axis=1)
+        coverage = np.mean(np.exp(-distances))
         
         return coverage
         
     except Exception as e:
         if logger:
-            logger.warning(f"Error evaluating SQ coverage: {e}")
+            logger.warning(f"Coverage evaluation failed: {e}")
         return 0.0

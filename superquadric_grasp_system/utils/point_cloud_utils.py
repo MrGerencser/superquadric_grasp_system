@@ -66,7 +66,7 @@ class PointCloudProcessor:
                 )
             
             # Shared visualization: detected cloud filtering
-            if self.enable_detected_object_clouds_visualization and self.visualizer:
+            if self.enable_detected_object_clouds_visualization:
                 try:
                     object_center = np.mean(original_object_points, axis=0)
                     self.visualizer.visualize_detected_cloud_filtering(

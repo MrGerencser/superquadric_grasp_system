@@ -16,7 +16,8 @@ class PointCloudManager:
                  workspace_bounds: list, distance_threshold: float,
                  require_both_cameras: bool, publish_enabled: bool,
                  poisson_reconstruction: bool = False, outlier_removal: bool = True,
-                 voxel_downsample_size: float = 0.002, visualize_fused_workspace: bool = False):
+                 voxel_downsample_size: float = 0.002, visualize_fused_workspace: bool = False,
+                 enable_detected_object_clouds_visualization: bool = False):
         self.node = node
         self.logger = node.get_logger()
         
@@ -29,11 +30,12 @@ class PointCloudManager:
         self.publish_point_clouds = publish_enabled
         self.visualize_fused_workspace = visualize_fused_workspace
         
-        # Create point cloud processor
+        # Create point cloud processor with visualization flag
         self.point_cloud_processor = PointCloudProcessor(
             poisson_reconstruction=poisson_reconstruction,
             outlier_removal=outlier_removal,
-            voxel_downsample_size=voxel_downsample_size
+            voxel_downsample_size=voxel_downsample_size,
+            enable_detected_object_clouds_visualization=enable_detected_object_clouds_visualization
         )
         
         # ROS publishers (will be initialized in initialize())
@@ -136,131 +138,157 @@ class PointCloudManager:
             return None, None, None, None
     
     def extract_object_point_clouds(self, results1, results2, class_ids1, class_ids2,
-                                depth_np1, depth_np2, camera_manager: CameraManager, fused_workspace_np: np.ndarray) -> Tuple[List, List, np.ndarray, np.ndarray]:
-        """Extract object point clouds from detection masks and optionally publish them"""
+                            depth_np1, depth_np2, camera_manager: CameraManager, fused_workspace_np: np.ndarray):
+        """Extract object point clouds with CPU-only processing for speed"""
         try:
-            # Clear GPU cache at start
-            if self.device == 'cuda':
-                torch.cuda.empty_cache()
-            
-            # Get camera parameters directly from camera_manager
-            fx1, fy1, cx1, cy1 = camera_manager.fx1, camera_manager.fy1, camera_manager.cx1, camera_manager.cy1
-            fx2, fy2, cx2, cy2 = camera_manager.fx2, camera_manager.fy2, camera_manager.cx2, camera_manager.cy2
-            rotation1_torch = camera_manager.rotation1_torch
-            origin1_torch = camera_manager.origin1_torch
-            rotation2_torch = camera_manager.rotation2_torch
-            origin2_torch = camera_manager.origin2_torch
-            
+            # OPTIMIZATION 1: Skip GPU entirely for small masks
             point_clouds_camera1 = []
             point_clouds_camera2 = []
             
-            # Process camera 1 masks with memory management
-            if results1.masks is not None and results1.masks.data.numel() > 0:
-                depth_map1_torch = torch.tensor(depth_np1, dtype=torch.float32, device='cpu')
-                if self.device == 'cuda':
-                    depth_map1_torch = depth_map1_torch.to(self.device)
-                
-                try:
-                    for i, individual_mask_tensor in enumerate(results1.masks.data):
-                        mask_indices = torch.nonzero(individual_mask_tensor, as_tuple=False)
-
-                        if mask_indices.numel() > 0: 
-                            with torch.amp.autocast('cuda'):
-                                points_3d = self.point_cloud_processor.convert_mask_to_3d_points(
-                                    mask_indices, depth_map1_torch, 
-                                    cx1, cy1, fx1, fy1
-                                )
-                            
-                            if points_3d.size(0) > 0:
-                                transformed = torch.mm(points_3d, rotation1_torch.T) + origin1_torch
-                                
-                                # Move to CPU immediately to free GPU memory
-                                transformed_np = transformed.cpu().numpy()
-                                if self._is_object_in_workspace(transformed_np):
-                                    point_clouds_camera1.append((transformed_np, int(class_ids1[i])))
-                                
-                                # Clean up GPU tensors
-                                del points_3d, transformed
-                                if self.device == 'cuda':
-                                    torch.cuda.empty_cache()
-                finally:
-                    # Clean up depth tensor
-                    del depth_map1_torch
-                    if self.device == 'cuda':
-                        torch.cuda.empty_cache()
+            # Get camera parameters as numpy arrays (avoid GPU)
+            rotation1_np = camera_manager.rotation1_torch.cpu().numpy()
+            origin1_np = camera_manager.origin1_torch.cpu().numpy()
+            rotation2_np = camera_manager.rotation2_torch.cpu().numpy()
+            origin2_np = camera_manager.origin2_torch.cpu().numpy()
             
-            # Process camera 2 masks with memory management
-            if results2.masks is not None and results2.masks.data.numel() > 0:
-                depth_map2_torch = torch.tensor(depth_np2, dtype=torch.float32, device='cpu')
-                if self.device == 'cuda':
-                    depth_map2_torch = depth_map2_torch.to(self.device)
-                
-                try:
-                    for i, individual_mask_tensor in enumerate(results2.masks.data):
-                        mask_indices = torch.nonzero(individual_mask_tensor, as_tuple=False)
-
-                        if mask_indices.numel() > 0: 
-                            with torch.amp.autocast('cuda'):
-                                points_3d = self.point_cloud_processor.convert_mask_to_3d_points(
-                                    mask_indices, depth_map2_torch,
-                                    cx2, cy2, fx2, fy2
-                                )
+            # Process camera 1 masks with CPU only
+            if results1.masks is not None and results1.masks.data.numel() > 0:
+                for i, individual_mask_tensor in enumerate(results1.masks.data):
+                    # Convert mask to CPU numpy immediately
+                    mask_np = individual_mask_tensor.cpu().numpy()
+                    mask_indices_np = np.argwhere(mask_np)
+                    
+                    if len(mask_indices_np) > 0:
+                        # CPU-based 3D point conversion
+                        points_3d_np = self._convert_mask_to_3d_points_cpu(
+                            mask_indices_np, depth_np1, 
+                            camera_manager.cx1, camera_manager.cy1, 
+                            camera_manager.fx1, camera_manager.fy1
+                        )
+                        
+                        if len(points_3d_np) > 0:
+                            # CPU transformation
+                            transformed_np = (points_3d_np @ rotation1_np.T) + origin1_np
                             
-                            if points_3d.size(0) > 0:
-                                transformed = torch.mm(points_3d, rotation2_torch.T) + origin2_torch
-                                
-                                transformed_np = transformed.cpu().numpy()
-                                if self._is_object_in_workspace(transformed_np):
-                                    point_clouds_camera2.append((transformed_np, int(class_ids2[i])))
-                                
-                                # Clean up GPU tensors
-                                del points_3d, transformed
-                                if self.device == 'cuda':
-                                    torch.cuda.empty_cache()
-                finally:
-                    # Clean up depth tensor
-                    del depth_map2_torch
-                    if self.device == 'cuda':
-                        torch.cuda.empty_cache()
-
-            # Fuse object point clouds
+                            if self._is_object_in_workspace(transformed_np):
+                                point_clouds_camera1.append((transformed_np, int(class_ids1[i])))
+            
+            # Process camera 2 masks with CPU only
+            if results2.masks is not None and results2.masks.data.numel() > 0:
+                for i, individual_mask_tensor in enumerate(results2.masks.data):
+                    mask_np = individual_mask_tensor.cpu().numpy()
+                    mask_indices_np = np.argwhere(mask_np)
+                    
+                    if len(mask_indices_np) > 0:
+                        points_3d_np = self._convert_mask_to_3d_points_cpu(
+                            mask_indices_np, depth_np2,
+                            camera_manager.cx2, camera_manager.cy2,
+                            camera_manager.fx2, camera_manager.fy2
+                        )
+                        
+                        if len(points_3d_np) > 0:
+                            transformed_np = (points_3d_np @ rotation2_np.T) + origin2_np
+                            
+                            if self._is_object_in_workspace(transformed_np):
+                                point_clouds_camera2.append((transformed_np, int(class_ids2[i])))
+            
+            # Continue with existing fusion logic...
             _, _, fused_objects = self.point_cloud_processor.fuse_point_clouds_centroid(
-                point_clouds_camera1, 
-                point_clouds_camera2, 
+                point_clouds_camera1, point_clouds_camera2, 
                 distance_threshold=self.distance_threshold,
                 require_both_cameras=self.require_both_cameras
             )
             
             fused_object_points = [pc for pc, _ in fused_objects]
             fused_object_classes = [cls for _, cls in fused_objects]
-            
-            fused_objects_np = (np.vstack(fused_object_points) 
-                            if fused_object_points else np.empty((0, 3)))
-            
-            # DISABLE DUE TO COMPUTATIONAL COST
-            # Subtract objects from workspace
-            # subtracted_cloud = subtract_point_clouds_gpu(
-            #     fused_workspace_np, fused_objects_np, distance_threshold=0.06
-            # )
-            subtracted_cloud = np.empty((0, 3))  # Empty array for now
+            fused_objects_np = (np.vstack(fused_object_points) if fused_object_points else np.empty((0, 3)))
+            subtracted_cloud = np.empty((0, 3))
+
+            # NEW: Direct visualization call
+            if self.point_cloud_processor.enable_detected_object_clouds_visualization and len(fused_object_points) > 0:
+                # Set up visualizer if not already done
+                if self.point_cloud_processor.visualizer is None:
+                    try:
+                        from ..visualization.main_visualizer import PerceptionVisualizer
+                        self.point_cloud_processor.visualizer = PerceptionVisualizer()
+                        self.logger.info("Detected object cloud visualization enabled")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to initialize visualizer: {e}")
+                        return fused_object_points, fused_object_classes, fused_objects_np, subtracted_cloud
+                
+                # Visualize each detected object
+                for i, (fused_points, class_id) in enumerate(zip(fused_object_points, fused_object_classes)):
+                    # Collect original points for this class from both cameras
+                    original_points_for_class = []
+                    for pc, cls in point_clouds_camera1:
+                        if cls == class_id:
+                            original_points_for_class.append(pc)
+                    for pc, cls in point_clouds_camera2:
+                        if cls == class_id:
+                            original_points_for_class.append(pc)
+                    
+                    if original_points_for_class:
+                        original_combined = np.vstack(original_points_for_class)
+                        object_center = np.mean(fused_points, axis=0)
+                        
+                        # Direct visualization call
+                        try:
+                            self.point_cloud_processor.visualizer.visualize_detected_cloud_filtering(
+                                original_points=original_combined,
+                                filtered_points=fused_points,
+                                class_id=class_id,
+                                object_center=object_center,
+                                window_name=f"Object {i+1} (Class {class_id}) - Original vs Fused"
+                            )
+                            self.logger.debug(f"Visualized object {i+1} with class {class_id}")
+                        except Exception as viz_error:
+                            self.logger.warning(f"Visualization failed for object {i+1}: {viz_error}")
 
             
-            # Publish point clouds if enabled
-            if self.publish_point_clouds:
-                self.publish_object_clouds(fused_objects_np)
-                self.publish_subtracted_cloud(subtracted_cloud)
-
             return fused_object_points, fused_object_classes, fused_objects_np, subtracted_cloud
 
         except Exception as e:
-            # Clean up on error
-            if self.device == 'cuda':
-                torch.cuda.empty_cache()
             self.logger.error(f"Error extracting object point clouds: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            # Return empty results with correct tuple structure
             return [], [], np.empty((0, 3)), np.empty((0, 3))
+        
+    def _convert_mask_to_3d_points_cpu(self, mask_indices_np: np.ndarray, depth_map: np.ndarray, 
+                                    cx: float, cy: float, fx: float, fy: float) -> np.ndarray:
+        """Convert 2D mask indices to 3D points using CPU operations"""
+        try:
+            if len(mask_indices_np) == 0:
+                return np.empty((0, 3))
+            
+            # Extract pixel coordinates
+            v_coords = mask_indices_np[:, 0]  # row indices
+            u_coords = mask_indices_np[:, 1]  # column indices
+            
+            # Get depth values
+            depth_values = depth_map[v_coords, u_coords]
+            
+            # Filter out invalid depth values
+            valid_depth_mask = (depth_values > 0) & (depth_values < 10.0)  # 10m max depth
+            
+            if not np.any(valid_depth_mask):
+                return np.empty((0, 3))
+            
+            # Keep only valid points
+            u_valid = u_coords[valid_depth_mask]
+            v_valid = v_coords[valid_depth_mask]
+            depth_valid = depth_values[valid_depth_mask]
+            
+            # Convert to 3D coordinates
+            x = (u_valid - cx) * depth_valid / fx
+            y = (v_valid - cy) * depth_valid / fy
+            z = depth_valid
+            
+            # Stack into 3D points
+            points_3d = np.column_stack([x, y, z])
+            
+            return points_3d
+            
+        except Exception as e:
+            self.logger.error(f"Error in CPU 3D point conversion: {e}")
+            return np.empty((0, 3))
 
     def publish_workspace_cloud(self, workspace_cloud: np.ndarray):
         """Publish workspace point cloud"""
@@ -304,39 +332,30 @@ class PointCloudManager:
         header.stamp = self.node.get_clock().now().to_msg()
         header.frame_id = "panda_link0"
         return header
-
+    
     def _is_object_in_workspace(self, object_points: np.ndarray, coverage_threshold: float = 0.5) -> bool:
-        """Check if object is within workspace bounds"""
+        """Workspace bounds check"""
         try:
             if len(object_points) == 0:
                 return False
             
-            # Extract workspace bounds
-            x_min, x_max = self.workspace_bounds[0], self.workspace_bounds[1]
-            y_min, y_max = self.workspace_bounds[2], self.workspace_bounds[3]
-            z_min, z_max = self.workspace_bounds[4], self.workspace_bounds[5]
+            bounds = np.array(self.workspace_bounds).reshape(3, 2)  # [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
             
-            # Check which points are within workspace bounds
-            x_in_bounds = (object_points[:, 0] >= x_min) & (object_points[:, 0] <= x_max)
-            y_in_bounds = (object_points[:, 1] >= y_min) & (object_points[:, 1] <= y_max)
-            z_in_bounds = (object_points[:, 2] >= z_min) & (object_points[:, 2] <= z_max)
+            # Vectorized bounds check
+            in_bounds = np.all((object_points >= bounds[:, 0]) & (object_points <= bounds[:, 1]), axis=1)
+            coverage = np.mean(in_bounds)
             
-            points_in_workspace = x_in_bounds & y_in_bounds & z_in_bounds
-            coverage = np.sum(points_in_workspace) / len(object_points)
+            # Quick center check
+            center = np.mean(object_points, axis=0)
+            center_in_bounds = np.all((center >= bounds[:, 0]) & (center <= bounds[:, 1]))
             
-            # Check object center position
-            object_center = np.mean(object_points, axis=0)
-            center_in_workspace = (
-                x_min <= object_center[0] <= x_max and
-                y_min <= object_center[1] <= y_max and
-                z_min <= object_center[2] <= z_max
-            )
-            
-            return (center_in_workspace and coverage >= coverage_threshold) or (coverage >= 0.8)
+            return center_in_bounds and coverage >= coverage_threshold
             
         except Exception as e:
             self.logger.error(f"Error in workspace bounds check: {e}")
             return False
+
+
     
     def is_ready(self) -> bool:
         """Check if point cloud manager is ready"""

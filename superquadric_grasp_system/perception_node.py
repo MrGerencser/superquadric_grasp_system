@@ -74,7 +74,8 @@ class PerceptionNode(Node):
             poisson_reconstruction=self.config.poisson_reconstruction,
             outlier_removal=self.config.outlier_removal,
             voxel_downsample_size=self.config.voxel_downsample_size,
-            visualize_fused_workspace=getattr(self.config, 'visualize_fused_workspace', False)
+            visualize_fused_workspace=getattr(self.config, 'visualize_fused_workspace', False),
+            enable_detected_object_clouds_visualization=getattr(self.config, 'enable_detected_object_clouds_visualization', False)
         )
         
         # Pose estimator - method-specific
@@ -154,14 +155,17 @@ class PerceptionNode(Node):
         """Main processing loop"""
         try:
             start_time = time.time()
-                    
+
+            t_proc_start = time.time()
             # Step 1: Capture camera data
             frame1, frame2 = self.camera_manager.capture_frames()
             depth1, depth2 = self.camera_manager.get_depth_maps()
-            
+
             # Step 2: Process point clouds
             pc1_cropped, pc2_cropped, fused_workspace_np, pcd_fused_workspace = self.point_cloud_manager.process_point_clouds(self.camera_manager) 
+            t_proc_end = time.time()
 
+            t_seg_start = time.time()
             # Step 3: Run object detection
             results1, results2, class_ids1, class_ids2 = self.detection_manager.detect_objects([frame1, frame2])
 
@@ -171,6 +175,7 @@ class PerceptionNode(Node):
                     results1, results2, class_ids1, class_ids2,
                     depth1, depth2, self.camera_manager, fused_workspace_np
                 )
+            t_seg_end = time.time()
 
             # Create point_cloud_data dictionary for compatibility
             point_cloud_data = {
@@ -190,6 +195,8 @@ class PerceptionNode(Node):
             object_point_clouds = point_cloud_data.get('object_point_clouds', [])
             object_classes = point_cloud_data.get('object_classes', [])
 
+
+            t_pose_start = time.time() # benchmark 
             # Step 5: Process detected objects for pose estimation
             workspace_cloud = None
             if object_point_clouds:
@@ -198,15 +205,14 @@ class PerceptionNode(Node):
             success = self.pose_estimator.process_objects(
                 object_point_clouds, object_classes, workspace_cloud
             )
-        
+            t_pose_end = time.time()
+
             if success:
                 self.get_logger().debug(f"Pose estimation completed successfully using {self.pose_estimation_method} method")
 
             # Performance monitoring
             total_time = time.time() - start_time
-            if total_time > 1.0 / (self.processing_rate * 0.8):  # Log if running slow
-                fps = 1.0 / total_time if total_time > 0 else 0
-                self.get_logger().debug(f"Main processing time: {total_time:.3f}s (FPS: {fps:.1f})")
+            self.get_logger().info(f"Pointcloud Processing time: {t_proc_end - t_proc_start:.3f}s Segmentation time: {t_seg_end - t_seg_start:.3f}s Pose estimation time: {t_pose_end - t_pose_start:.3f}s Total loop time: {total_time:.3f}s")
 
         except Exception as e:
             self.get_logger().error(f"Error in process_frames: {e}")

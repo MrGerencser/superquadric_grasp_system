@@ -56,10 +56,10 @@ class PerceptionVisualizer:
             if object_center is None:
                 object_center = np.mean(original_points, axis=0) if len(original_points) > 0 else np.array([0, 0, 0])
             
-            # Create original point cloud (red)
-            original_pcd = o3d.geometry.PointCloud()
-            original_pcd.points = o3d.utility.Vector3dVector(original_points)
-            original_pcd.paint_uniform_color([1, 0, 0])  # Red for original
+            # # Create original point cloud (red)
+            # original_pcd = o3d.geometry.PointCloud()
+            # original_pcd.points = o3d.utility.Vector3dVector(original_points)
+            # original_pcd.paint_uniform_color([1, 0, 0])  # Red for original
             
             # Create filtered point cloud (green)
             filtered_pcd = o3d.geometry.PointCloud()
@@ -72,11 +72,11 @@ class PerceptionVisualizer:
             
             # Set window name
             if window_name is None:
-                window_name = f"Before/After Filtering - Class {class_id} (Original: {len(original_points)}, Filtered: {len(filtered_points)})"
+                window_name = f"After Filtering - Class {class_id} (Original: {len(original_points)}, Filtered: {len(filtered_points)})"
             
             # Visualize both point clouds together
             o3d.visualization.draw_geometries(
-                [original_pcd, filtered_pcd, coord_frame],
+                [filtered_pcd],
                 window_name=window_name,
                 zoom=0.7,
                 front=[0, -1, 0],

@@ -18,6 +18,16 @@ class Superquadric:
         """
         return self.R  # each column is a unit vector
     
+    def world_to_obj(self, p_world):
+        """
+        Transform a point or array of points from world frame to SQ-local frame.
+        p_world: (3,) or (N,3) array of points in world coordinates
+        Returns: same shape array of points in SQ-local coordinates
+        """
+        p_world = np.asarray(p_world)
+        centered = p_world - self.T
+        return centered @ self.R.T
+    
 class Gripper:
     """
     Parallel-jaw gripper description **in its own local frame**.

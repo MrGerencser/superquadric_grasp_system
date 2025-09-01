@@ -316,9 +316,6 @@ class SuperquadricGraspPlanner:
         S = Superquadric(ε=shape, a=scale, euler=euler, t=translation)
         G = self.gripper
 
-        # Dense surface samples for α / β metrics (≈10 k points)
-        S_samples = sample_superquadric_surface(S, n_samples=10_000)
-
         # -------------------- 3. candidate set ------------------------------
         base_R        = self.principal_axis_sweeps(S, G, step_deg=10)     
         all_R, offset = self.extra_sweeps_special_shapes(S, base_R, G)
@@ -353,8 +350,12 @@ class SuperquadricGraspPlanner:
         # ---------------------- 6. scoring ----------------------
         scored = []
         for Rg, tg in G_valid:
+            closing_dir_world = Rg @ G.lambda_local  # Gripper closing dir in world frame
+            closing_dir_local = S.R.T @ closing_dir_world  # Transform to SQ local frame
+            closing_dir_local = closing_dir_local / (np.linalg.norm(closing_dir_local) + 1e-15)  # Normalize
+            
             score, (hα, hβ, hγ, hδ) = score_grasp(
-                Rg, tg, S_samples, object_pts, kdtree=kdtree)
+                Rg, tg, S, object_pts, closing_dir_local, kdtree=kdtree)
             self.logger.info(f"score={score:.3f} α={hα:.3f} β={hβ:.3f} γ={hγ:.3f} δ={hδ:.3f}")
             scored.append((score, Rg, tg))
 
@@ -381,19 +382,34 @@ class SuperquadricGraspPlanner:
             if not grasp_data_list:
                 self.logger.warning("No grasp data provided")
                 return None
+            
+            # Sort by base score descending
+            sorted_grasps = sorted(enumerate(grasp_data_list), 
+                                key=lambda x: x[1]['score'], reverse=True)
+            
+            # Get the best score and find all grasps with exactly the same score
+            best_base_score = sorted_grasps[0][1]['score']
+            
+            candidates_to_evaluate = []
+            for original_idx, grasp_data in sorted_grasps:
+                if grasp_data['score'] == best_base_score:  # Exact equality
+                    candidates_to_evaluate.append((original_idx, grasp_data))
+                else:
+                    break  # Since sorted, we can break early when score changes
+            
+            self.logger.info(f"Evaluating {len(candidates_to_evaluate)}/{len(grasp_data_list)} grasps "
+                            f"with best score: {best_base_score:.6f}")
                 
             # Define constants for scoring only
             robot_origin = np.array([0.0, 0.0, 0.0])
             preferred_approach = np.array([0.0, 0.0, 1.0])  # Approach from above
-            
-            # All grasp_data_list entries are tested for support and collision
-            
+                        
             # Score all valid grasps (no filtering, just scoring)
             best_score = -float('inf')
             best_grasp = None
             best_info = None
             
-            for original_idx, grasp_data in enumerate(grasp_data_list):
+            for original_idx, grasp_data in candidates_to_evaluate:
                 try:
                     pose = grasp_data['pose']
                     base_score = grasp_data['score']
@@ -523,51 +539,3 @@ class SuperquadricGraspPlanner:
         except Exception as e:
             self.logger.error(f"Error in select_best_grasp_with_criteria: {e}")
             return None
-        
-    def _get_gripper_collision_points(self, gripper_center, rotation_matrix):
-        """
-        Get key points on the gripper that could collide with the object
-        
-        Args:
-            gripper_center: Gripper center position in world frame
-            rotation_matrix: Gripper orientation (3x3 rotation matrix)
-            
-        Returns:
-            List of 3D points representing gripper collision zones
-        """
-        points = []
-        
-        # Get gripper axes in world frame
-        approach_world = rotation_matrix @ self.gripper.approach_axis  # -Z local
-        closing_world = rotation_matrix @ self.gripper.lambda_local    # +Y local  
-        width_world = rotation_matrix @ np.array([1, 0, 0])           # +X local
-        
-        # Finger tip positions
-        half_open = self.gripper.max_open / 2.0
-        tip1 = gripper_center + closing_world * half_open
-        tip2 = gripper_center - closing_world * half_open
-        points.extend([tip1, tip2])
-        
-        # Finger body points (along finger length)
-        finger_steps = 3  # Check 3 points along each finger
-        for i in range(1, finger_steps + 1):
-            finger_offset = (-approach_world) * (i / finger_steps) * self.gripper.jaw_len
-            points.append(tip1 + finger_offset)
-            points.append(tip2 + finger_offset)
-        
-        # Palm/back points
-        palm_offset = (-approach_world) * (self.gripper.jaw_len + self.gripper.palm_depth/2)
-        points.append(gripper_center + palm_offset)
-        
-        # Side points (gripper width)
-        for side_factor in [-0.5, 0.5]:
-            side_offset = width_world * side_factor * self.gripper.palm_width
-            points.append(gripper_center + palm_offset + side_offset)
-        
-        # Cross-bar points (connecting the fingers)
-        crossbar_offset = (-approach_world) * self.gripper.jaw_len
-        for closing_factor in [-0.8, -0.4, 0.0, 0.4, 0.8]:
-            crossbar_point = gripper_center + crossbar_offset + closing_world * closing_factor * self.gripper.max_open
-            points.append(crossbar_point)
-        
-        return points

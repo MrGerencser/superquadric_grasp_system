@@ -27,7 +27,7 @@ flowchart LR
 
 **Tested on:** ROS 2 Humble · Ubuntu 22.04 · ZED 2i (ZED SDK 5.0.5) · Franka Panda Emika
 
-💡 See also: For an alternative approach to 6D pose and grasp estimation, check out [sam6d_wrapper](https://github.com/MrGerencser/sam6d_wrapper)
+💡 See also: For an alternative approach to 6D pose and grasp estimation, check out [grasp_sam6d](https://github.com/MrGerencser/grasp_sam6d)
 
 ---
 
@@ -51,7 +51,7 @@ flowchart LR
 - ROS 2 Humble (Ubuntu 22.04)  
 - [ZED SDK](https://www.stereolabs.com/en-ch/developers/release) - (tested with version 5.0.5)
 - [Franka ROS 2 packages](https://github.com/frankarobotics/franka_ros2) (tested with v0.1.15)
-- [EMS-superquadric_fitting](https://github.com/bmlklwx/EMS-superquadric_fitting) (for superquadric-recovery)
+- [EMS-superquadric_fitting](https://github.com/MrGerencser/EMS-superquadric_fitting) (for superquadric-recovery)
 
 ---
 

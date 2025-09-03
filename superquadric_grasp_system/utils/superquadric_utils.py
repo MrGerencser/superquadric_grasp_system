@@ -28,8 +28,10 @@ def fit_single_superquadric(
         points,
         x0_prior=x0_prior,
         OutlierRatio=outlier_ratio,
-        MaxIterationEM=60,
+        MaxIterationEM=20,
+        ToleranceEM=5e-3,
         MaxOptiIterations=5,
+        Sigma=0.01,
         Rescale=RESCALE,
     )
 
@@ -54,10 +56,18 @@ def fit_multiple_superquadrics(
     
     # Choose K
     K = calculate_k_superquadrics(len(points), logger)
+    if logger:
+        logger.info(f"Using K={K} clusters for {len(points)} points")
 
     # Build K + 1 ellipsoid seeds
     kmeans = KMeans(n_clusters=K, random_state=42, n_init=10)
     labels = kmeans.fit_predict(points)
+    
+    if logger:
+        logger.info(f"K-means created {len(np.unique(labels))} clusters")
+        for i in range(K):
+            cluster_size = np.sum(labels == i)
+            logger.info(f"Cluster {i}: {cluster_size} points")
 
     seeds: List[dict] = []
 
@@ -67,9 +77,14 @@ def fit_multiple_superquadrics(
         cluster_pts = points[cluster_mask]
         if len(cluster_pts) < 50:
             if logger: 
-                logger.warning(f"Cluster {i} too small – skipped")
+                logger.warning(f"Cluster {i} too small ({len(cluster_pts)} points) – skipped")
             continue
-        seeds.append(ellipsoid_seed(cluster_pts, f"cluster_{i}", logger))
+        
+        seed = ellipsoid_seed(cluster_pts, f"cluster_{i}", logger)
+        if seed:
+            seeds.append(seed)
+            if logger:
+                logger.info(f"Created seed for cluster {i}")
 
     # Extra global seed
     seeds.append(ellipsoid_seed(points, "global", logger))
@@ -91,8 +106,10 @@ def fit_multiple_superquadrics(
             points,
             x0_prior=x0,
             OutlierRatio=outlier_ratio,
-            MaxIterationEM=60,
+            MaxIterationEM=20,
+            ToleranceEM=5e-3,
             MaxOptiIterations=5,
+            Sigma=0.01,
             Rescale=RESCALE,
         )
         results.append((sq, p, seed["type"]))
@@ -109,11 +126,16 @@ def fit_multiple_superquadrics(
 
 # ---------------------------------------UTILITIES-------------------------------------------
 def calculate_k_superquadrics(n_pts: int, logger=None) -> int:
-    """Equation 12 in the paper, capped to MAX_ALLOWED_K."""
+    """
+    Calculate K for K-means:
+    K = 6 if |X| < 8000
+    K = 8 + 2 * floor((|X| - 8000) / 4000) if |X| >= 8000
+    """
     if n_pts < 8000:
-        k = max(1, int(np.log10(n_pts)) - 2)
+        k = 6
     else:
-        k = 2
+        k = 8 + 2 * int((n_pts - 8000) // 4000)
+    
     k = min(k, 20)  # cap to max 20 superquadrics
     if logger:
         logger.debug(f"Calculated K={k} for {n_pts} points")

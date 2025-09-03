@@ -1,3 +1,4 @@
+from matplotlib.pylab import gamma
 import numpy as np
 import open3d as o3d
 from scipy.spatial import KDTree
@@ -396,7 +397,9 @@ def score_grasp(R, t, S, Y, closing_dir_local, *,
     
     # ---- Curvature flatness (hγ) ----
     gamma = endpoint_curvature(S, closing_dir_local)
-    h_gamma = np.exp(-(gamma**2) / q_gamma)
+    print("gamma:", gamma)
+    # h_gamma = np.exp(-(gamma**2) / q_gamma) # original
+    h_gamma = 1.0 / (1.0 + gamma / q_gamma)  # less aggressive decay
 
     # ---------- COM distance (hδ) ----------
     com   = Y.mean(axis=0)

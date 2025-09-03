@@ -2,6 +2,8 @@ import numpy as np
 import open3d as o3d
 from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation as R_simple
+from ..grasp_selector import select_best_grasp
+
 
 import rclpy.logging
 
@@ -375,166 +377,29 @@ class SuperquadricGraspPlanner:
         return results
 
     def select_best_grasp_with_criteria(self, grasp_data_list, point_cloud=None):
-        """
-        Select best grasp with criteria 
-        """
+        """Select best grasp using unified criteria"""
         try:
             if not grasp_data_list:
                 self.logger.warning("No grasp data provided")
                 return None
             
-            # Sort by base score descending
-            sorted_grasps = sorted(enumerate(grasp_data_list), 
-                                key=lambda x: x[1]['score'], reverse=True)
+            # For superquadric: filter to best-scoring grasps first
+            sorted_grasps = sorted(grasp_data_list, key=lambda x: x.get('score', 0.0), reverse=True)
+            best_base_score = sorted_grasps[0].get('score', 0.0)
             
-            # Get the best score and find all grasps with exactly the same score
-            best_base_score = sorted_grasps[0][1]['score']
+            # Only evaluate grasps with the same top score
+            candidates = [g for g in sorted_grasps if g.get('score', 0.0) == best_base_score]
             
-            candidates_to_evaluate = []
-            for original_idx, grasp_data in sorted_grasps:
-                if grasp_data['score'] == best_base_score:  # Exact equality
-                    candidates_to_evaluate.append((original_idx, grasp_data))
-                else:
-                    break  # Since sorted, we can break early when score changes
-            
-            self.logger.info(f"Evaluating {len(candidates_to_evaluate)}/{len(grasp_data_list)} grasps "
+            self.logger.info(f"Evaluating {len(candidates)}/{len(grasp_data_list)} grasps "
                             f"with best score: {best_base_score:.6f}")
-                
-            # Define constants for scoring only
-            robot_origin = np.array([0.0, 0.0, 0.0])
-            preferred_approach = np.array([0.0, 0.0, 1.0])  # Approach from above
-                        
-            # Score all valid grasps (no filtering, just scoring)
-            best_score = -float('inf')
-            best_grasp = None
-            best_info = None
             
-            for original_idx, grasp_data in candidates_to_evaluate:
-                try:
-                    pose = grasp_data['pose']
-                    base_score = grasp_data['score']
-                    position = pose[:3, 3]
-                    rotation_matrix = pose[:3, :3]
-                    
-                    # Convert to scalars for scoring calculations
-                    pos_x, pos_y, pos_z = float(position[0]), float(position[1]), float(position[2])
-                    position_scalar = np.array([pos_x, pos_y, pos_z])
-                    
-                    gripper_z_world = rotation_matrix[:, 2]
-                    actual_approach_direction = -gripper_z_world
-                    approach_z = float(actual_approach_direction[2])
-                    
-                    # === SCORING ONLY (no filtering) ===
-                    
-                    # Distance and reach scoring
-                    distance_to_base = np.linalg.norm(position_scalar - robot_origin)
-                    distance_score = 1.0 / (1.0 + distance_to_base)
-                    
-                    max_reach = 0.855
-                    reach_penalty = max(0.0, (distance_to_base - max_reach) * 3.0)
-                    
-                    # Height preference scoring (not filtering)
-                    height_score = 1.0
-                    if pos_z < 0.05:  # Prefer higher grasps
-                        height_score = 0.3
-                    elif pos_z > 0.2:
-                        height_score = 0.7
-                    
-                    # Approach direction preference (not filtering)
-                    approach_alignment = np.dot(actual_approach_direction, preferred_approach)
-                    approach_score = max(0.0, approach_alignment)
-                    
-                    # Strong penalty for approaches from below table
-                    below_table_penalty = 0.0
-                    if approach_z < -0.5:  # Approaching from significantly below
-                        below_table_penalty = 5.0 * abs(approach_z)  # Heavy penalty
-                    elif approach_z < 0.0:  # Any downward approach
-                        below_table_penalty = 2.0 * abs(approach_z)  # Moderate penalty
-                    
-                    # Point cloud distance scoring (if available)
-                    point_cloud_distance_score = 0.0
-                    point_cloud_penalty = 0.0
-                    min_distance_to_cloud = None
-                    
-                    if point_cloud is not None:
-                        try:
-                            distances = np.linalg.norm(point_cloud - position_scalar, axis=1)
-                            min_distance_to_cloud = np.min(distances)
-                            
-                            # Preference for grasps near object surface (not filtering)
-                            if 0.01 <= min_distance_to_cloud <= 0.03:  # Sweet spot
-                                point_cloud_distance_score = 1.0
-                            elif min_distance_to_cloud > 0.03:
-                                point_cloud_distance_score = 0.5
-                            else:  # Very close < 1cm
-                                point_cloud_distance_score = 0.2
-                                
-                        except Exception as pc_error:
-                            self.logger.warning(f"Point cloud distance calculation failed: {pc_error}")
-                    
-                    # Workspace preference scoring
-                    workspace_score = 0.0
-                    if 0.2 <= pos_x <= 0.6 and -0.3 <= pos_y <= 0.3:
-                        workspace_score = 1.0
-                    elif 0.1 <= pos_x <= 0.7 and -0.4 <= pos_y <= 0.4:
-                        workspace_score = 0.5
-                    
-                    # FINAL SCORE CALCULATION
-                    final_score = (
-                        base_score +                           # Original grasp quality
-                        2.0 * distance_score +                # Prefer closer grasps
-                        1.5 * height_score +                  # Height preference
-                        2.0 * approach_score +                # Approach direction preference
-                        1.0 * workspace_score +               # Workspace preference
-                        1.0 * point_cloud_distance_score +    # Object proximity preference
-                        -reach_penalty                        # Penalties
-                        -below_table_penalty
-                    )
-                    
-                    # Debug output for first few grasps
-                    if original_idx < 3:
-                        self.logger.info(f"  [SCORE] Grasp {original_idx+1}:")
-                        self.logger.info(f"    Position: [{pos_x:.3f}, {pos_y:.3f}, {pos_z:.3f}]")
-                        self.logger.info(f"    Approach Z: {approach_z:.3f}")
-                        self.logger.info(f"    Distance to base: {distance_to_base:.3f}m")
-                        self.logger.info(f"    Final score: {final_score:.6f}")
-
-                    # Track best grasp
-                    if final_score > best_score:
-                        best_score = final_score
-                        best_grasp = grasp_data
-                        best_info = {
-                            'original_index': original_idx,
-                            'base_score': base_score,
-                            'distance_score': distance_score,
-                            'height_score': height_score,
-                            'approach_score': approach_score,
-                            'workspace_score': workspace_score,
-                            'point_cloud_distance_score': point_cloud_distance_score,
-                            'min_distance_to_cloud': min_distance_to_cloud,
-                            'final_score': final_score
-                        }
-                    
-                except Exception as e:
-                    self.logger.error(f"Error scoring grasp {original_idx+1}: {e}")
-                    continue
-            
-            if best_grasp is not None:
-                self.logger.info(f"\n[SELECTION] Best grasp selected (#{best_info['original_index']+1}) with score: {best_score:.6f}")
-                self.logger.info(f"   Base score: {best_info['base_score']:.6f}")
-                self.logger.info(f"   Distance score: {best_info['distance_score']:.3f}")
-                self.logger.info(f"   Height score: {best_info['height_score']:.3f}")
-                self.logger.info(f"   Approach score: {best_info['approach_score']:.3f}")
-
-                if best_info.get('min_distance_to_cloud') is not None:
-                    self.logger.info(f"   Min distance to point cloud: {best_info['min_distance_to_cloud']*1000:.1f}mm")
-
-                # Show final pose
-                best_pose = best_grasp['pose']
-                pos = best_pose[:3, 3]
-                self.logger.info(f"   FINAL POSITION: [{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}]")
-
-            return best_grasp
+            return select_best_grasp(
+                grasp_poses=candidates,
+                point_cloud=point_cloud,
+                workspace_bounds=None,  # Use defaults
+                logger=self.logger,
+                method_type="superquadric"
+            )
             
         except Exception as e:
             self.logger.error(f"Error in select_best_grasp_with_criteria: {e}")

@@ -415,7 +415,7 @@ def endpoint_curvature(S, closing_dir_local):
     Compute Gaussian curvature at superquadric axis endpoints.
     
     Parameters:
-    - S: Superquadric object with ax, ay, az, ε1, ε2 
+    - S: Superquadric object with ax, ay, az, ε1, ε2
     - closing_dir_local: Grasp direction in superquadric local frame
     
     Returns:
@@ -432,29 +432,30 @@ def endpoint_curvature(S, closing_dir_local):
     if abs(e1) < 1e-12 or abs(e2) < 1e-12:
         return 10.0  # Very sharp edge
     
-    if axis_idx == 0:  # x-axis grasp, contact at (±a, 0, 0)
-        # At x-axis endpoints: (±a, 0, 0)
-        # Principal curvatures are k1 = (2/e2 - 1)/(b*e2), k2 = (2/e1 - 1)/(c*e1)
-        k1 = (2.0/e2 - 1.0) / (b * e2)
-        k2 = (2.0/e1 - 1.0) / (c * e1)
-        gamma = abs(k1 * k2)
-            
-    elif axis_idx == 1:  # y-axis grasp, contact at (0, ±b, 0)  
-        # At y-axis endpoints: (0, ±b, 0)
-        # Principal curvatures are k1 = (2/e2 - 1)/(a*e2), k2 = (2/e1 - 1)/(c*e1)
-        k1 = (2.0/e2 - 1.0) / (a * e2)
-        k2 = (2.0/e1 - 1.0) / (c * e1)
-        gamma = abs(k1 * k2)
-            
-    else:  # z-axis grasp, contact at (0, 0, ±c)
-        # At z-axis endpoints: (0, 0, ±c)
-        # Principal curvatures are k1 = (2/e1 - 1)/(a*e1), k2 = (2/e1 - 1)/(b*e1)
-        k1 = (2.0/e1 - 1.0) / (a * e1)
-        k2 = (2.0/e1 - 1.0) / (b * e1)
-        gamma = abs(k1 * k2)
+    # Prevent division by zero
+    e1_safe = max(abs(e1), 1e-12)
+    e2_safe = max(abs(e2), 1e-12)
     
-    # Scale down to reasonable range
-    gamma = gamma * 0.005  # Adjust this scaling factor
+    if axis_idx == 0:  # x-axis grasp, contact at (±a, 0, 0)
+        # Principal curvatures in y and z directions
+        k1 = (2.0/e2_safe - 1.0) / (b * e2_safe)  # y-direction (xy-plane)
+        k2 = (2.0/e1_safe - 1.0) / (c * e1_safe)  # z-direction (principal axis)
+        
+    elif axis_idx == 1:  # y-axis grasp, contact at (0, ±b, 0)
+        # Principal curvatures in x and z directions  
+        k1 = (2.0/e2_safe - 1.0) / (a * e2_safe)  # x-direction (xy-plane)
+        k2 = (2.0/e1_safe - 1.0) / (c * e1_safe)  # z-direction (principal axis)
+        
+    else:  # z-axis grasp, contact at (0, 0, ±c) - CORRECTED
+        # Both principal curvatures are in the xy-plane, so both use ε2
+        k1 = (2.0/e2_safe - 1.0) / (a * e2_safe)  # x-direction (xy-plane)
+        k2 = (2.0/e2_safe - 1.0) / (b * e2_safe)  # y-direction (xy-plane)
+    
+    gamma = abs(k1 * k2)
+    
+    # Scale to reasonable range for grasp planning
+    gamma = gamma * 0.005
+    
     return gamma
 
 

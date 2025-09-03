@@ -134,7 +134,6 @@ class ICPEstimator:
                                 point_cloud=point_cloud,
                                 workspace_bounds=None,  # Use defaults
                                 logger=self.logger,
-                                method_type="icp"
                             )
         
         # Visualize if enabled
